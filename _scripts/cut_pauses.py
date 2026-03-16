@@ -285,5 +285,79 @@ def cut_and_concat(filepath, segments, output_path):
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+def save_transcript(words, filepath):
+    """Save transcription to JSON file next to the video."""
+    json_path = filepath.with_suffix(".transcript.json")
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(words, f, ensure_ascii=False, indent=2)
+    print(f"  Транскрипция сохранена: {json_path}")
+
+
+def process_file(model, filepath, args):
+    """Process a single video file through all three phases."""
+    print(f"\n{'─'*50}")
+    print(f"Файл: {filepath.name}")
+    print(f"{'─'*50}")
+
+    # Duration
+    try:
+        duration = get_video_duration(filepath)
+    except Exception:
+        print(f"  Предупреждение: не удалось определить длительность, пропускаю.")
+        return
+
+    # Phase 1: Transcribe
+    words = transcribe(model, filepath)
+    if not words:
+        print(f"  Предупреждение: транскрипция не вернула слов, пропускаю.")
+        return
+
+    if args.save_transcript:
+        save_transcript(words, filepath)
+
+    # Phase 2: Filter
+    clean_words, word_stats = filter_words(words, args.pause)
+    segments, pause_stats = build_segments(clean_words, args.pause)
+
+    # Report
+    print_report(filepath, duration, words, clean_words, segments, word_stats, pause_stats)
+
+    if args.dry_run:
+        return
+
+    if not segments:
+        print("  Предупреждение: нет сегментов для нарезки, пропускаю.")
+        return
+
+    # Phase 3: Cut and concat
+    output_path = get_output_path(filepath, args.output)
+    cut_and_concat(filepath, segments, output_path)
+
+
+def main():
+    args = parse_args()
+    check_ffmpeg()
+
+    video_files = collect_video_files(args.input)
+    if not video_files:
+        print("Нет файлов для обработки.")
+        sys.exit(1)
+
+    print(f"Файлов для обработки: {len(video_files)}")
+
+    # Load model once for all files
+    model = load_whisper_model(args.model)
+
+    for filepath in video_files:
+        try:
+            process_file(model, filepath, args)
+        except KeyboardInterrupt:
+            print("\nПрервано пользователем.")
+            sys.exit(1)
+        except Exception as e:
+            print(f"  Ошибка при обработке {filepath.name}: {e}")
+            continue
+
+
 if __name__ == "__main__":
-    parse_args()
+    main()
