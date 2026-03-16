@@ -10,6 +10,11 @@ import sys
 import tempfile
 from pathlib import Path
 
+# Fix Windows terminal encoding for Cyrillic output
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi"}
 
 FILLER_WORDS = {
@@ -104,16 +109,32 @@ def format_duration(seconds):
     return f"{m}:{s:02d}"
 
 
+_whisper_model_cache = {}
+
+
 def load_whisper_model(model_name):
-    """Load faster-whisper model with CUDA auto-detection."""
+    """Load faster-whisper model with CUDA auto-detection and runtime verification."""
     from faster_whisper import WhisperModel
 
+    if model_name in _whisper_model_cache:
+        return _whisper_model_cache[model_name]
+
+    # Try CUDA with a real inference test to catch missing DLLs
     try:
         model = WhisperModel(model_name, device="cuda", compute_type="float16")
+        # Verify CUDA actually works by running a tiny inference
+        import numpy as np
+        silence = np.zeros(16000, dtype=np.float32)  # 1 second of silence
+        list(model.transcribe(silence, language="ru")[0])
         print(f"Модель {model_name} загружена (CUDA)")
+        _whisper_model_cache[model_name] = model
+        return model
     except Exception:
-        model = WhisperModel(model_name, device="cpu", compute_type="int8")
-        print(f"Модель {model_name} загружена (CPU)")
+        pass
+
+    model = WhisperModel(model_name, device="cpu", compute_type="int8")
+    print(f"Модель {model_name} загружена (CPU)")
+    _whisper_model_cache[model_name] = model
     return model
 
 
