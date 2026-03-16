@@ -224,6 +224,9 @@ def build_segments(clean_words, pause_threshold):
     # Last segment
     segments.append((seg_start, seg_end))
 
+    # Filter out invalid segments where end <= start (Whisper edge case)
+    segments = [(s, e) for s, e in segments if e > s]
+
     pause_stats = {"count": pause_count, "total_duration": pause_total}
     return segments, pause_stats
 
