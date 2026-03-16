@@ -85,5 +85,66 @@ def get_output_path(input_file, output_arg):
         return out / f"{stem}{suffix}"
 
 
+def get_video_duration(filepath):
+    """Get video duration in seconds using ffprobe."""
+    result = subprocess.run(
+        ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(filepath)],
+        capture_output=True, text=True
+    )
+    return float(result.stdout.strip())
+
+
+def format_duration(seconds):
+    """Format seconds as MM:SS."""
+    m, s = divmod(int(seconds), 60)
+    if m >= 60:
+        h, m = divmod(m, 60)
+        return f"{h}:{m:02d}:{s:02d}"
+    return f"{m}:{s:02d}"
+
+
+def load_whisper_model(model_name):
+    """Load faster-whisper model with CUDA auto-detection."""
+    from faster_whisper import WhisperModel
+
+    try:
+        model = WhisperModel(model_name, device="cuda", compute_type="float16")
+        print(f"Модель {model_name} загружена (CUDA)")
+    except Exception:
+        model = WhisperModel(model_name, device="cpu", compute_type="int8")
+        print(f"Модель {model_name} загружена (CPU)")
+    return model
+
+
+def transcribe(model, filepath):
+    """Transcribe video and return list of word dicts with start/end times."""
+    print(f"Транскрипция: {filepath.name}...")
+    segments, info = model.transcribe(
+        str(filepath),
+        language="ru",
+        word_timestamps=True,
+    )
+
+    words = []
+    segment_count = 0
+    for segment in segments:
+        segment_count += 1
+        if segment_count % 10 == 0:
+            print(f"  ...обработано сегментов: {segment_count}", end="\r")
+        if segment.words:
+            for w in segment.words:
+                words.append({
+                    "word": w.word.strip(),
+                    "start": w.start,
+                    "end": w.end,
+                })
+
+    if segment_count >= 10:
+        print()  # newline after \r
+    print(f"  Найдено слов: {len(words)}")
+    return words
+
+
 if __name__ == "__main__":
     parse_args()
