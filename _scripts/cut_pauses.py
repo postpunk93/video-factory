@@ -146,5 +146,84 @@ def transcribe(model, filepath):
     return words
 
 
+def filter_words(words, pause_threshold):
+    """Filter out filler words, stutters, noise tokens. Return clean words and stats."""
+    stats = {"fillers": 0, "stutters": 0, "noise": 0}
+    clean = []
+
+    for i, w in enumerate(words):
+        text = w["word"].lower().strip()
+
+        # Noise tokens: anything in square brackets
+        if text.startswith("[") and text.endswith("]"):
+            stats["noise"] += 1
+            continue
+
+        # Filler words
+        if text in FILLER_WORDS:
+            stats["fillers"] += 1
+            continue
+
+        # Stutters: same word twice in a row — skip the first occurrence
+        # We check if the NEXT word is the same; if so, skip current
+        if i + 1 < len(words):
+            next_text = words[i + 1]["word"].lower().strip()
+            if text == next_text and text not in FILLER_WORDS:
+                stats["stutters"] += 1
+                continue
+
+        clean.append(w)
+
+    return clean, stats
+
+
+def build_segments(clean_words, pause_threshold):
+    """Build segments of continuous speech from clean words.
+
+    Returns list of (start, end) tuples and pause stats.
+    """
+    if not clean_words:
+        return [], {"count": 0, "total_duration": 0}
+
+    segments = []
+    seg_start = clean_words[0]["start"]
+    seg_end = clean_words[0]["end"]
+    pause_count = 0
+    pause_total = 0.0
+
+    for i in range(1, len(clean_words)):
+        gap = clean_words[i]["start"] - seg_end
+        if gap > pause_threshold:
+            segments.append((seg_start, seg_end))
+            pause_count += 1
+            pause_total += gap
+            seg_start = clean_words[i]["start"]
+        seg_end = clean_words[i]["end"]
+
+    # Last segment
+    segments.append((seg_start, seg_end))
+
+    pause_stats = {"count": pause_count, "total_duration": pause_total}
+    return segments, pause_stats
+
+
+def print_report(filepath, duration, words, clean_words, segments, word_stats, pause_stats):
+    """Print dry-run report."""
+    clean_duration = sum(end - start for start, end in segments)
+    # Add gaps between segments
+    total_with_gaps = clean_duration + max(0, len(segments) - 1) * GAP_BETWEEN_SEGMENTS
+    pct = (total_with_gaps / duration * 100) if duration > 0 else 0
+
+    print(f"\n{'='*50}")
+    print(f"Файл: {filepath.name} ({format_duration(duration)})")
+    print(f"Найдено слов: {len(words)}")
+    print(f"Удалено пауз: {pause_stats['count']} (суммарно {format_duration(pause_stats['total_duration'])})")
+    print(f"Удалено филлеров: {word_stats['fillers']}")
+    print(f"Удалено повторов: {word_stats['stutters']}")
+    print(f"Удалено шумов: {word_stats['noise']}")
+    print(f"Итоговая длительность: {format_duration(total_with_gaps)} ({pct:.0f}% от оригинала)")
+    print(f"{'='*50}\n")
+
+
 if __name__ == "__main__":
     parse_args()
