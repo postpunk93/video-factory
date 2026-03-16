@@ -225,5 +225,65 @@ def print_report(filepath, duration, words, clean_words, segments, word_stats, p
     print(f"{'='*50}\n")
 
 
+def cut_and_concat(filepath, segments, output_path):
+    """Cut segments from video and concatenate them using ffmpeg concat demuxer."""
+    from tqdm import tqdm
+
+    tmpdir = tempfile.mkdtemp(prefix="cut_pauses_")
+    try:
+        segment_files = []
+        print(f"Нарезка: {len(segments)} сегментов...")
+
+        for i, (start, end) in enumerate(tqdm(segments, desc="  Нарезка")):
+            seg_file = os.path.join(tmpdir, f"seg_{i:05d}{filepath.suffix}")
+            cmd = [
+                "ffmpeg", "-y", "-loglevel", "error",
+                "-ss", str(start),
+                "-to", str(end),
+                "-i", str(filepath),
+                "-c", "copy",
+                seg_file,
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"  Ошибка ffmpeg на сегменте {i}: {result.stderr.strip()}")
+                continue
+            segment_files.append(seg_file)
+
+        if not segment_files:
+            print("Ошибка: не удалось нарезать ни одного сегмента.")
+            return False
+
+        # Write concat list
+        concat_file = os.path.join(tmpdir, "concat.txt")
+        with open(concat_file, "w", encoding="utf-8") as f:
+            for sf in segment_files:
+                # Use forward slashes for ffmpeg compatibility
+                safe_path = sf.replace("\\", "/")
+                f.write(f"file '{safe_path}'\n")
+
+        # Concatenate
+        print("  Склейка...")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        cmd = [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-f", "concat", "-safe", "0",
+            "-i", concat_file,
+            "-c", "copy",
+            str(output_path),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"Ошибка склейки: {result.stderr.strip()}")
+            return False
+
+        print(f"  Готово: {output_path}")
+        return True
+
+    finally:
+        # Cleanup temp files
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 if __name__ == "__main__":
     parse_args()
