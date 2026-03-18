@@ -5,6 +5,7 @@ import argparse
 import gc
 import json
 import os
+import shutil
 import subprocess
 import sys
 from datetime import date
@@ -50,6 +51,12 @@ def get_hf_token(args):
         print("  https://huggingface.co/pyannote/segmentation-3.0")
         sys.exit(1)
     return token
+
+
+def check_ffprobe():
+    """Проверить наличие ffprobe в PATH."""
+    if not shutil.which("ffprobe"):
+        print("Предупреждение: ffprobe не найден в PATH, длительность не определится.")
 
 
 def collect_files(input_path):
@@ -351,6 +358,7 @@ def process_file(filepath, args, device, compute_type, token):
 def main():
     args = parse_args()
     token = get_hf_token(args)
+    check_ffprobe()
 
     files = collect_files(args.input)
     if not files:
