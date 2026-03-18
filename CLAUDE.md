@@ -23,6 +23,19 @@ python _scripts/cut_pauses.py <input_file_or_dir> [--output PATH] [--model large
 
 Requires `ffmpeg` and `ffprobe` on PATH. CUDA is auto-detected with CPU fallback.
 
+## Транскрибация с диаризацией
+
+```bash
+# Install dependencies
+pip install whisperx
+
+# Transcription with speaker diarization
+python _scripts/transcribe.py <input_file_or_dir> [--speakers 2] [--model large-v3] [--output PATH]
+```
+
+Requires `ffprobe` on PATH, `HF_TOKEN` env variable (or `--hf-token`) for pyannote diarization model.
+Outputs: `{filename}.transcript.txt` (human-readable) and `{filename}.transcript.json` (for automation).
+
 ## Architecture
 
 Single-script pipeline in `_scripts/cut_pauses.py` with three phases:
