@@ -18,9 +18,8 @@ if sys.platform == "win32":
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi"}
 
 FILLER_WORDS = {
-    "ну", "вот", "это", "эм", "ам", "короче", "типа", "значит",
-    "как бы", "так сказать", "в общем", "допустим", "слушай",
-    "смотри", "ладно", "блин", "походу",
+    "эм", "ам", "короче", "типа", "значит",
+    "как бы", "так сказать", "в общем", "походу",
 }
 
 GAP_BETWEEN_SEGMENTS = 0.15  # 150 ms gap to keep speech natural
@@ -43,7 +42,7 @@ def parse_args():
     )
     parser.add_argument("input", help="Видеофайл или папка с видео")
     parser.add_argument("--output", help="Папка или файл для результата")
-    parser.add_argument("--model", default="medium", help="Модель Whisper (default: medium)")
+    parser.add_argument("--model", default="large-v3", help="Модель Whisper (default: large-v3)")
     parser.add_argument("--pause", type=float, default=0.5, help="Порог паузы в секундах (default: 0.5)")
     parser.add_argument("--dry-run", action="store_true", help="Только показать отчёт, не обрабатывать")
     parser.add_argument("--save-transcript", action="store_true", help="Сохранить транскрипцию в JSON")
@@ -112,12 +111,33 @@ def format_duration(seconds):
 _whisper_model_cache = {}
 
 
+def _ensure_cuda_dll_path():
+    """Add NVIDIA pip package DLLs to PATH so ctranslate2 can find them."""
+    try:
+        import nvidia.cublas
+        site_dir = os.path.dirname(os.path.dirname(nvidia.cublas.__path__[0]))
+        dll_dirs = [
+            os.path.join(site_dir, "nvidia", "cublas", "bin"),
+            os.path.join(site_dir, "nvidia", "cudnn", "bin"),
+            os.path.join(site_dir, "nvidia", "cuda_runtime", "bin"),
+        ]
+        path = os.environ.get("PATH", "")
+        for d in dll_dirs:
+            if os.path.isdir(d) and d not in path:
+                os.environ["PATH"] = d + os.pathsep + path
+                path = os.environ["PATH"]
+    except ImportError:
+        pass
+
+
 def load_whisper_model(model_name):
     """Load faster-whisper model with CUDA auto-detection and runtime verification."""
     from faster_whisper import WhisperModel
 
     if model_name in _whisper_model_cache:
         return _whisper_model_cache[model_name]
+
+    _ensure_cuda_dll_path()
 
     # Try CUDA with a real inference test to catch missing DLLs
     try:
@@ -169,10 +189,15 @@ def transcribe(model, filepath):
 
 def filter_words(words, pause_threshold):
     """Filter out filler words, stutters, noise tokens. Return clean words and stats."""
-    stats = {"fillers": 0, "stutters": 0, "noise": 0}
+    stats = {"fillers": 0, "stutters": 0, "noise": 0, "zero_duration": 0}
     clean = []
 
     for i, w in enumerate(words):
+        # Zero-duration words: Whisper hallucinations
+        if w["end"] <= w["start"]:
+            stats["zero_duration"] += 1
+            continue
+
         text = w["word"].lower().strip()
 
         # Noise tokens: anything in square brackets
@@ -245,27 +270,49 @@ def print_report(filepath, duration, words, clean_words, segments, word_stats, p
     print(f"Удалено филлеров: {word_stats['fillers']}")
     print(f"Удалено повторов: {word_stats['stutters']}")
     print(f"Удалено шумов: {word_stats['noise']}")
+    if word_stats.get("zero_duration", 0) > 0:
+        print(f"Удалено галлюцинаций: {word_stats['zero_duration']}")
     print(f"Итоговая длительность: {format_duration(total_with_gaps)} ({pct:.0f}% от оригинала)")
     print(f"{'='*50}\n")
+
+
+def _detect_nvenc():
+    """Check if NVIDIA NVENC encoder is available."""
+    result = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-encoders"],
+        capture_output=True, text=True,
+    )
+    return "h264_nvenc" in result.stdout
+
+
+def _build_encode_args(use_nvenc):
+    """Return ffmpeg encoding arguments for video and audio."""
+    if use_nvenc:
+        return ["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "20", "-c:a", "aac", "-b:a", "192k"]
+    return ["-c:v", "libx264", "-preset", "fast", "-crf", "18", "-c:a", "aac", "-b:a", "192k"]
 
 
 def cut_and_concat(filepath, segments, output_path):
     """Cut segments from video and concatenate them using ffmpeg concat demuxer."""
     from tqdm import tqdm
 
+    use_nvenc = _detect_nvenc()
+    encoder_name = "NVENC" if use_nvenc else "libx264"
+    encode_args = _build_encode_args(use_nvenc)
+
     tmpdir = tempfile.mkdtemp(prefix="cut_pauses_")
     try:
         segment_files = []
-        print(f"Нарезка: {len(segments)} сегментов...")
+        print(f"Нарезка: {len(segments)} сегментов ({encoder_name})...")
 
         for i, (start, end) in enumerate(tqdm(segments, desc="  Нарезка")):
-            seg_file = os.path.join(tmpdir, f"seg_{i:05d}{filepath.suffix}")
+            seg_file = os.path.join(tmpdir, f"seg_{i:05d}.mp4")
             cmd = [
                 "ffmpeg", "-y", "-loglevel", "error",
                 "-ss", str(start),
                 "-to", str(end),
                 "-i", str(filepath),
-                "-c", "copy",
+                *encode_args,
                 seg_file,
             ]
             result = subprocess.run(cmd, capture_output=True, text=True)
@@ -282,11 +329,10 @@ def cut_and_concat(filepath, segments, output_path):
         concat_file = os.path.join(tmpdir, "concat.txt")
         with open(concat_file, "w", encoding="utf-8") as f:
             for sf in segment_files:
-                # Use forward slashes for ffmpeg compatibility
                 safe_path = sf.replace("\\", "/")
                 f.write(f"file '{safe_path}'\n")
 
-        # Concatenate
+        # Concatenate (stream copy — all segments have same encoding)
         print("  Склейка...")
         output_path.parent.mkdir(parents=True, exist_ok=True)
         cmd = [
@@ -385,3 +431,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)  # avoid CUDA teardown crash (exit code 127)

@@ -1,7 +1,19 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git init:*)"
+      "Bash(git init:*)",
+      "Bash(python:*)",
+      "Bash(git add:*)",
+      "Bash(pip install:*)",
+      "Bash(find:*)",
+      "Bash(ffprobe:*)",
+      "Read(//c/Users/Alex/.cache/huggingface/hub//**)",
+      "Bash(dir C:UsersAlex.cachehuggingfacehub)",
+      "Bash(nvidia-smi:*)",
+      "Bash(pip index:*)",
+      "Bash(pip show:*)",
+      "Bash(ffmpeg:*)",
+      "Bash(git config:*)"
     ]
   }
 }
