@@ -4,50 +4,49 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Factory (Паузорез)** — Video automation pipeline for Russian-language interviews. Removes pauses, filler words, stutters, and noise from video files without re-encoding.
+**Factory** — Video automation pipeline for Russian-language YouTube interviews. Transcription, pause removal, hero reply cutting, project assembly.
 
-The technical specification is in `task.md` (Russian). Design docs are in `docs/plans/`.
+Design docs are in `docs/plans/`. Original cut_pauses spec archived in `docs/archive/task-cut-pauses.md`.
 
-## Running the Main Script
+## Scripts
+
+### cut_pauses.py — удаление пауз и слов-паразитов
 
 ```bash
-# Install dependencies
 pip install faster-whisper tqdm
-
-# Dry run (preview only, no processing)
-python _scripts/cut_pauses.py projects/test/01_raw/video1343572807.mp4 --dry-run
-
-# Full processing
 python _scripts/cut_pauses.py <input_file_or_dir> [--output PATH] [--model large-v3] [--pause 0.5] [--save-transcript]
 ```
 
 Requires `ffmpeg` and `ffprobe` on PATH. CUDA is auto-detected with CPU fallback.
 
-## Транскрибация с диаризацией
+### transcribe.py — транскрибация с диаризацией
 
 ```bash
-# Install dependencies
 pip install whisperx
-
-# Transcription with speaker diarization
 python _scripts/transcribe.py <input_file_or_dir> [--speakers 2] [--model large-v3] [--output PATH] [--json]
 ```
 
 Requires `ffprobe` on PATH, `HF_TOKEN` env variable (or `--hf-token`) for pyannote diarization model.
-Outputs: `{filename}.transcript.txt` (human-readable). With `--json`: also `{filename}.transcript.json` (word-level timestamps for automation, e.g. hero reply cutting).
-
-## Architecture
-
-Single-script pipeline in `_scripts/cut_pauses.py` with three phases:
-
-1. **Transcription** — `faster-whisper` extracts word-level timestamps (Russian)
-2. **Filtering** — Removes filler words, stutters, noise tokens, and pauses above threshold
-3. **Cut & Concat** — `ffmpeg` concat demuxer extracts and joins speech segments (no re-encode)
+Outputs: `{filename}.transcript.txt` (human-readable). With `--json`: also `{filename}.transcript.json` (word-level timestamps).
 
 ## Conventions
 
-- **Project folders**: `YYYY-MM-description` under `projects/`, each with `01_raw/` (input) and `02_cuts/` (output)
-- **Output naming**: `{filename}_clean.mp4`
+- **Project folders**: `YYYY-MM-description` under `projects/`, structured by content type:
+  ```
+  raw/interviews/    ← записи созвонов
+  raw/voiceover/     ← начитка Славы
+  raw/article.md     ← статья
+  transcripts/       ← расшифровки (transcribe.py)
+  cuts/              ← нарезки: очищенные видео, реплики героя
+  audio/             ← извлечённый звук
+  script/            ← сценарий
+  subtitles/         ← SRT-файлы
+  assembly/          ← FCP XML, проект
+  publish/           ← финал + мета
+  project.md         ← статус, заметки
+  ```
+- **Scripts are generic** — accept input + `--output`, don't know about project structure. Orchestration is agent/skill responsibility.
+- **Output naming**: `{filename}_clean.mp4`, `{filename}.transcript.txt`
 - **User-facing messages and comments**: Russian language
 - **Paths**: Use `pathlib.Path` objects
 - **Video formats**: `.mp4`, `.mov`, `.mkv`, `.avi`
