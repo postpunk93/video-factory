@@ -16,6 +16,15 @@ if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
+# Загрузить .env из корня проекта
+_env_file = Path(__file__).resolve().parent.parent / ".env"
+if _env_file.exists():
+    for line in _env_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, _, value = line.partition("=")
+            os.environ.setdefault(key.strip(), value.strip())
+
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi"}
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".ogg", ".flac", ".m4a"}
 ALL_EXTENSIONS = VIDEO_EXTENSIONS | AUDIO_EXTENSIONS
