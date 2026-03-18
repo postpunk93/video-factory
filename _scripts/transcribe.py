@@ -45,6 +45,8 @@ def parse_args():
     parser.add_argument("--output", help="Папка для результатов")
     parser.add_argument("--hf-token", default=None,
                         help="HuggingFace токен (или переменная HF_TOKEN)")
+    parser.add_argument("--json", action="store_true",
+                        help="Дополнительно сохранить JSON с word-level таймкодами")
     return parser.parse_args()
 
 
@@ -319,19 +321,14 @@ def get_duration(filepath):
     return float(result.stdout.strip())
 
 
-def get_output_paths(filepath, output_arg):
-    """Определить пути для TXT и JSON."""
+def get_output_dir(filepath, output_arg):
+    """Определить папку для результатов."""
     if output_arg:
         out_dir = Path(output_arg)
         out_dir.mkdir(parents=True, exist_ok=True)
     else:
         out_dir = filepath.parent
-
-    stem = filepath.stem
-    return (
-        out_dir / f"{stem}.transcript.txt",
-        out_dir / f"{stem}.transcript.json",
-    )
+    return out_dir
 
 
 def process_file(filepath, args, device, compute_type, token):
@@ -357,9 +354,15 @@ def process_file(filepath, args, device, compute_type, token):
     speaker_map = build_speaker_map(speakers)
     blocks = merge_segments(result["segments"])
 
-    txt_path, json_path = get_output_paths(filepath, args.output)
-    save_txt(blocks, speaker_map, filepath.name, duration, txt_path)
-    save_json(blocks, speaker_map, filepath.name, duration, json_path)
+    out_dir = get_output_dir(filepath, args.output)
+    stem = filepath.stem
+
+    save_txt(blocks, speaker_map, filepath.name, duration,
+             out_dir / f"{stem}.transcript.txt")
+
+    if args.json:
+        save_json(blocks, speaker_map, filepath.name, duration,
+                  out_dir / f"{stem}.transcript.json")
 
     print(f"\nГотово: {len(blocks)} блоков, {len(speakers)} спикеров")
 

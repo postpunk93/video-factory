@@ -30,11 +30,11 @@ Requires `ffmpeg` and `ffprobe` on PATH. CUDA is auto-detected with CPU fallback
 pip install whisperx
 
 # Transcription with speaker diarization
-python _scripts/transcribe.py <input_file_or_dir> [--speakers 2] [--model large-v3] [--output PATH]
+python _scripts/transcribe.py <input_file_or_dir> [--speakers 2] [--model large-v3] [--output PATH] [--json]
 ```
 
 Requires `ffprobe` on PATH, `HF_TOKEN` env variable (or `--hf-token`) for pyannote diarization model.
-Outputs: `{filename}.transcript.txt` (human-readable) and `{filename}.transcript.json` (for automation).
+Outputs: `{filename}.transcript.txt` (human-readable). With `--json`: also `{filename}.transcript.json` (word-level timestamps for automation, e.g. hero reply cutting).
 
 ## Architecture
 
