@@ -117,10 +117,10 @@ def find_candidates(phrase: str, transcripts: dict) -> list[dict]:
                     widx = char_map[min(pos, len(char_map) - 1)]
                     # Корректируем начало/конец на всю фразу
                     start_widx = max(0, widx - i)
-                    end_widx = min(len(words) - 1, start_widx + len(pwords) - 1 + 5)
+                    end_widx = min(len(words) - 1, start_widx + len(pwords) - 1)
 
-                    start_t = _safe_time(words[start_widx], "start", words, start_widx)
-                    end_t = _safe_time(words[end_widx], "end", words, end_widx)
+                    start_t = round(_safe_time(words[start_widx], "start", words, start_widx), 2)
+                    end_t = round(_safe_time(words[end_widx], "end", words, end_widx), 2)
 
                     # Дедупликация: мержим если в пределах 5 секунд
                     merged = False
@@ -168,9 +168,10 @@ def load_script(project_dir: Path) -> list[dict]:
         for row_idx, row in enumerate(reader, start=2):  # строки с 2 (1 = заголовок)
             while len(row) < 4:
                 row.append("")
-            # Колонка 0 — Слава, колонка 2 — Герой
-            for col, speaker in [(0, "slava"), (2, "hero")]:
-                text = row[col].strip()
+            # text_col — колонка текста, tc_col — колонка таймкодов
+            # CSV: Слава(0), Таймкоды(1), Герой(2), Таймкоды(3)
+            for text_col, tc_col, speaker in [(0, 1, "slava"), (2, 3, "hero")]:
+                text = row[text_col].strip()
                 if not text:
                     continue
                 if text.startswith("ЭПИЗОД"):
@@ -179,7 +180,7 @@ def load_script(project_dir: Path) -> list[dict]:
                     "row_idx": row_idx,
                     "speaker": speaker,
                     "text": text,
-                    "col": col,
+                    "col": tc_col,
                 })
     print(f"Загружено строк из сценария: {len(lines)}")
     return lines
@@ -279,15 +280,15 @@ def snap_to_silence(start: float, end: float, silences: list[dict],
 
     best_dist_start = window
     for s in silences:
-        # silence_end до start — потенциальная точка старта
-        if s["end"] <= start and (start - s["end"]) < best_dist_start:
+        # silence_end до start (±0.1s допуск на перекрытие)
+        if s["end"] <= start + 0.1 and (start - s["end"]) < best_dist_start:
             best_dist_start = start - s["end"]
             snapped_start = s["end"]
 
     best_dist_end = window
     for s in silences:
-        # silence_start после end — потенциальная точка окончания
-        if s["start"] >= end and (s["start"] - end) < best_dist_end:
+        # silence_start после end (±0.1s допуск на перекрытие)
+        if s["start"] >= end - 0.1 and (s["start"] - end) < best_dist_end:
             best_dist_end = s["start"] - end
             snapped_end = s["start"]
 
@@ -440,16 +441,9 @@ def cmd_snap(project_dir: Path) -> None:
 
         tc_str = f"{fname}, {fmt_tc(snapped_start)} -> {fmt_tc(snapped_end)}"
 
-        # Записываем в CSV
+        # Записываем в CSV (col уже указывает на колонку таймкодов: 1 или 3)
         ridx = row["row_idx"]
-        col = row.get("col", 1)  # колонка таймкодов
-        tc_col = col + 1 if col == 0 else col  # 0→1 (Слава), 2→3 (Герой)
-        if col == 0:
-            tc_col = 1
-        elif col == 2:
-            tc_col = 3
-        else:
-            tc_col = col
+        tc_col = row.get("col", 1)
 
         # row_idx — номер строки в CSV (1-based, 1 = заголовок)
         csv_idx = ridx - 1  # индекс в массиве (0-based)
