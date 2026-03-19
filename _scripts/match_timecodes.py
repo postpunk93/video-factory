@@ -164,7 +164,7 @@ def load_script(project_dir: Path) -> list[dict]:
     lines = []
     with open(csv_path, "r", encoding="utf-8") as f:
         reader = csv.reader(f)
-        header = next(reader, None)  # пропускаем заголовок
+        next(reader, None)  # пропускаем заголовок
         for row_idx, row in enumerate(reader, start=2):  # строки с 2 (1 = заголовок)
             while len(row) < 4:
                 row.append("")
@@ -281,18 +281,20 @@ def snap_to_silence(start: float, end: float, silences: list[dict],
     best_dist_start = window
     for s in silences:
         # silence_end до start (±0.1s допуск на перекрытие)
-        if s["end"] <= start + 0.1 and (start - s["end"]) < best_dist_start:
-            best_dist_start = start - s["end"]
+        dist = max(0, start - s["end"])
+        if s["end"] <= start + 0.1 and dist < best_dist_start:
+            best_dist_start = dist
             snapped_start = s["end"]
 
     best_dist_end = window
     for s in silences:
         # silence_start после end (±0.1s допуск на перекрытие)
-        if s["start"] >= end - 0.1 and (s["start"] - end) < best_dist_end:
-            best_dist_end = s["start"] - end
+        dist = max(0, s["start"] - end)
+        if s["start"] >= end - 0.1 and dist < best_dist_end:
+            best_dist_end = dist
             snapped_end = s["start"]
 
-    return snapped_start, snapped_end
+    return round(snapped_start, 2), round(snapped_end, 2)
 
 
 # ─── Команда: search ───────────────────────────────────────────────────────
@@ -490,7 +492,7 @@ def cmd_compact(project_dir: Path) -> None:
                 start = w.get("start", 0.0)
                 end = w.get("end", 0.0)
                 word = w.get("word", "")
-                f.write(f"{idx} {start:.2f}-{end:.2f} {word}\n")
+                f.write(f"{idx:5d} {start:8.2f}-{end:8.2f} {word}\n")
 
         print(f"  {out_path.name}: {len(all_words)} слов")
 
