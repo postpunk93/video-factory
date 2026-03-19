@@ -29,6 +29,17 @@ python _scripts/transcribe.py <input_file_or_dir> [--speakers 2] [--model large-
 Requires `ffprobe` on PATH, `HF_TOKEN` env variable (or `--hf-token`) for pyannote diarization model.
 Outputs: `{filename}.transcript.txt` (human-readable). With `--json`: also `{filename}.transcript.json` (word-level timestamps).
 
+### match_timecodes.py — сопоставление реплик сценария с таймкодами
+
+```bash
+python _scripts/match_timecodes.py search <project_dir>    # Проход 1: поиск кандидатов → candidates.json
+python _scripts/match_timecodes.py snap <project_dir>       # Проход 3: snap to silence → обновляет script.csv
+python _scripts/match_timecodes.py compact <project_dir>    # Генерация words_compact.txt для агентов
+```
+
+Требует `ffmpeg` на PATH (для silencedetect). Транскрипты должны быть в `transcripts/*.transcript.json`.
+Проход 2 (агентная верификация) выполняется скиллом `/match-timecodes`.
+
 ## Conventions
 
 - **Project folders**: `YYYY-MM-description` under `projects/`, structured by content type:
