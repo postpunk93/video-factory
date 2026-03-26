@@ -8,6 +8,7 @@
 читает script/script.csv и генерирует XML в assembly/.
 """
 
+import argparse
 import csv
 import json
 import subprocess
@@ -33,7 +34,7 @@ def probe_file(path: Path) -> dict:
     cmd = [
         "ffprobe", "-v", "quiet",
         "-print_format", "json",
-        "-show_streams",
+        "-show_format", "-show_streams",
         str(path),
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
@@ -80,6 +81,12 @@ def probe_file(path: Path) -> dict:
                 if duration:
                     info["duration_sec"] = float(duration)
 
+    # Финальный fallback: duration из format (контейнер)
+    if not info["duration_sec"]:
+        fmt_duration = data.get("format", {}).get("duration")
+        if fmt_duration:
+            info["duration_sec"] = float(fmt_duration)
+
     return info
 
 
@@ -101,9 +108,13 @@ def scan_project(project_dir: Path) -> tuple[dict, dict, dict]:
     first_interview_info = None
 
     # Voiceover files
+    voiceover_count = 0
     if voiceover_dir.exists():
         for f in sorted(voiceover_dir.iterdir()):
             if f.suffix.lower() in VIDEO_EXTENSIONS:
+                voiceover_count += 1
+                if voiceover_count > 1:
+                    print(f"  WARN: несколько voiceover-файлов, используется последний: {f.name}")
                 print(f"  Сканирую: {f.name}")
                 info = probe_file(f)
                 key = "voiceover"
@@ -413,11 +424,11 @@ def xml_to_string(xmeml) -> str:
 # ---------------------------------------------------------------------------
 
 def main():
-    if len(sys.argv) < 2:
-        print("Использование: python _scripts/build_xml.py <project_dir>")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Генерация FCP 7 XML черновой сборки из script.csv")
+    parser.add_argument("project_dir", type=Path, help="Путь к папке проекта")
+    args = parser.parse_args()
 
-    project_dir = Path(sys.argv[1]).resolve()
+    project_dir = args.project_dir.resolve()
     if not project_dir.is_dir():
         print(f"Ошибка: директория не найдена: {project_dir}")
         sys.exit(1)
