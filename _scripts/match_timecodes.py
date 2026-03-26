@@ -73,10 +73,22 @@ def _find_all(needle: str, haystack: str) -> list[int]:
     return positions
 
 
+MAX_WORD_DURATION = 1.5  # секунд — максимальная разумная длительность одного слова
+
+
 def _safe_time(word: dict, field: str, words: list[dict], idx: int) -> float:
-    """Берёт start/end из слова; если 0.0 — ищет у соседей."""
+    """Берёт start/end из слова; если 0.0 — ищет у соседей.
+
+    Для end: ограничивает длительность слова MAX_WORD_DURATION
+    (артефакт Whisper — end последнего слова сегмента часто растянут на тишину).
+    """
     val = word.get(field, 0.0)
     if val and val > 0.0:
+        # Защита от артефактов Whisper: end слишком далеко от start
+        if field == "end":
+            word_start = word.get("start", 0.0)
+            if word_start > 0 and val - word_start > MAX_WORD_DURATION:
+                return round(word_start + MAX_WORD_DURATION, 2)
         return val
     # Ищем ближайшего соседа с валидным значением
     direction = -1 if field == "start" else 1
