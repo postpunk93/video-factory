@@ -40,6 +40,14 @@ python _scripts/match_timecodes.py compact <project_dir>    # Генерация
 Требует `ffmpeg` на PATH (для silencedetect). Транскрипты должны быть в `transcripts/*.transcript.json`.
 Проход 2 (агентная верификация) выполняется скиллом `/match-timecodes`.
 
+### build_xml.py — генерация FCP 7 XML черновой сборки
+
+```bash
+python _scripts/build_xml.py <project_dir>
+```
+
+Сканирует `raw/voiceover/` и `raw/interviews/`, получает метаданные через `ffprobe`, читает `script/script.csv` и генерирует FCP 7 XML в `assembly/`. Выходные файлы: `{name}_rough_cut.xml` (относительные пути) и `{name}_rough_cut_local.xml` (абсолютные). Requires `ffprobe` on PATH.
+
 ## Conventions
 
 - **Project folders**: `YYYY-MM-description` under `projects/`, structured by content type:
