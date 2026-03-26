@@ -48,6 +48,20 @@ python _scripts/build_xml.py <project_dir>
 
 Сканирует `raw/voiceover/` и `raw/interviews/`, получает метаданные через `ffprobe`, читает `script/script.csv` и генерирует FCP 7 XML в `assembly/`. Выходные файлы: `{name}_rough_cut.xml` (относительные пути) и `{name}_rough_cut_local.xml` (абсолютные). Требует `ffprobe` на PATH.
 
+## Skills
+
+### /youtube-script — создание сценария видео
+
+```bash
+/youtube-script <project_dir>
+```
+
+Пишет сценарий на основе статьи (`raw/article.md`) и расшифровок интервью (`transcripts/*.transcript.txt`). Результат: `script/script_draft.csv` — реплики автора и героя, без таймкодов. Таймкоды заполняются пайплайном после записи.
+
+### /match-timecodes — верификация таймкодов
+
+Проход 2 агентной верификации. Запускается после `match_timecodes.py search`.
+
 ## Conventions
 
 - **Project folders**: `YYYY-MM-description` under `projects/`, structured by content type:
