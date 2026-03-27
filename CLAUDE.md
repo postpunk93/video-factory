@@ -50,13 +50,22 @@ python _scripts/build_xml.py <project_dir>
 
 ## Skills
 
-### /youtube-script — создание сценария видео
+### /youtube-script — создание сценария видео (v1)
 
 ```bash
 /youtube-script <project_dir>
 ```
 
 Пишет сценарий на основе статьи (`raw/article.md`) и расшифровок интервью (`transcripts/*.transcript.txt`). Результат: `script/script_draft.csv` — реплики автора и героя, без таймкодов. Таймкоды заполняются пайплайном после записи.
+
+### /yt-analyze + /yt-write — создание сценария видео (v2)
+
+```bash
+/yt-analyze <project_dir>   # Анализ: цифры, угол, приёмы, структура → script/analysis.md
+/yt-write <project_dir>     # Написание + ревью → script/script_draft.csv
+```
+
+Двухэтапный процесс с интегрированными драматургическими приёмами (docs/youtube-best-practices/) и агентом-ревьюером. `/yt-analyze` выбирает подходящие приёмы по фактуре и строит структуру. `/yt-write` пишет сценарий и запускает самопроверку (1-3 итерации). Дизайн: `docs/plans/2026-03-28-yt-script-v2-design.md`.
 
 ### /match-timecodes — верификация таймкодов
 
