@@ -1,4 +1,5 @@
 projects/
 __pycache__/
 *.tmp.*
+.claude/settings.local.json
 .env
