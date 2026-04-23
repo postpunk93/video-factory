@@ -4,6 +4,7 @@
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -18,7 +19,7 @@ if sys.platform == "win32":
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi"}
 
 FILLER_WORDS = {
-    "эм", "ам", "короче", "типа", "значит",
+    "короче", "типа", "значит",
     "как бы", "так сказать", "в общем", "походу",
 }
 
@@ -28,8 +29,8 @@ INTERJECTIONS = {
     "ох", "эх", "хм", "ой",
 }
 
-# Заикания вида "я-я", "к-к-как" — первая буква повторяется через дефис
-STUTTER_RE = r"^([а-яёa-z])-\1+$"
+# Заикания вида "я-я", "я-я-я", "к-к-как" — первая буква повторяется через дефис
+STUTTER_RE = re.compile(r"^([а-яёa-z])(-\1)+(-[а-яёa-z]+)?$")
 
 GAP_BETWEEN_SEGMENTS = 0.15  # 150 ms gap to keep speech natural
 
