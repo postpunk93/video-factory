@@ -43,10 +43,10 @@ python _scripts/match_timecodes.py compact <project_dir>    # Генерация
 ### build_xml.py — генерация FCP 7 XML черновой сборки
 
 ```bash
-python _scripts/build_xml.py <project_dir>
+python _scripts/build_xml.py <project_dir> [--davinci]
 ```
 
-Сканирует `raw/voiceover/` и `raw/interviews/`, получает метаданные через `ffprobe`, читает `script/script.csv` и генерирует FCP 7 XML в `assembly/`. Выходные файлы: `{name}_rough_cut.xml` (относительные пути) и `{name}_rough_cut_local.xml` (абсолютные). Требует `ffprobe` на PATH.
+Сканирует `raw/voiceover/` и `raw/interviews/` (видео + аудио форматы), получает метаданные через `ffprobe`, читает `script/script.csv` и генерирует FCP 7 XML в `assembly/`. Выходные файлы: `{name}_rough_cut.xml` (относительные пути) и `{name}_rough_cut_local.xml` (абсолютные). С флагом `--davinci` дополнительно генерирует `{name}_rough_cut.fcpxml` (FCPXML 1.9 для DaVinci Resolve). Требует `ffprobe` на PATH.
 
 ## Skills
 

@@ -15,6 +15,7 @@ import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
+import re
 from urllib.parse import quote
 from xml.dom import minidom
 
@@ -23,6 +24,8 @@ if sys.platform == "win32":
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi"}
+AUDIO_EXTENSIONS = {".m4a", ".mp3", ".wav", ".aac", ".flac"}
+MEDIA_EXTENSIONS = VIDEO_EXTENSIONS | AUDIO_EXTENSIONS
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +114,7 @@ def scan_project(project_dir: Path) -> tuple[dict, dict, dict]:
     voiceover_count = 0
     if voiceover_dir.exists():
         for f in sorted(voiceover_dir.iterdir()):
-            if f.suffix.lower() in VIDEO_EXTENSIONS:
+            if f.suffix.lower() in MEDIA_EXTENSIONS:
                 voiceover_count += 1
                 if voiceover_count > 1:
                     print(f"  WARN: несколько voiceover-файлов, используется последний: {f.name}")
@@ -124,7 +127,7 @@ def scan_project(project_dir: Path) -> tuple[dict, dict, dict]:
     # Interview files
     if interviews_dir.exists():
         for f in sorted(interviews_dir.iterdir()):
-            if f.suffix.lower() in VIDEO_EXTENSIONS:
+            if f.suffix.lower() in MEDIA_EXTENSIONS:
                 print(f"  Сканирую: {f.name}")
                 info = probe_file(f)
                 key = f.stem.lower()
@@ -170,30 +173,65 @@ def parse_tc(tc_str: str) -> float:
     return 0
 
 
+def _resolve_file_key(name: str, filename_to_key: dict) -> str | None:
+    """Находит file_key по имени файла (с расширением, без, или с заменой _ на .)."""
+    # Точное совпадение
+    key = filename_to_key.get(name)
+    if key:
+        return key
+
+    # Lowercase
+    lower_map = {k.lower(): v for k, v in filename_to_key.items()}
+    key = lower_map.get(name.lower())
+    if key:
+        return key
+
+    # Поиск по stem (без расширения): name == stem файла
+    stem_map = {}
+    for fname, fkey in filename_to_key.items():
+        stem = Path(fname).stem
+        stem_map[stem.lower()] = fkey
+        # Вариант с заменой . на _ (1774870214.520061 -> 1774870214_520061)
+        stem_map[stem.lower().replace(".", "_")] = fkey
+
+    key = stem_map.get(name.lower())
+    if key:
+        return key
+
+    return None
+
+
 def parse_unified_tc(tc_str: str, filename_to_key: dict):
-    """Парсит формат: 'filename.ext, MM:SS.ss -> MM:SS.ss'.
+    """Парсит таймкод реплики в двух форматах:
+    - 'filename.ext, MM:SS.ss -> MM:SS.ss'  (старый)
+    - 'filename: MM:SS.ss — MM:SS.ss'       (новый)
 
     Возвращает (file_key, start_sec, end_sec) или None.
     """
     tc_str = tc_str.strip()
-    if not tc_str or "->" not in tc_str or "," not in tc_str:
+    if not tc_str:
         return None
 
-    comma_idx = tc_str.index(",")
-    filename = tc_str[:comma_idx].strip()
-    tc_part = tc_str[comma_idx + 1:].strip()
-    parts = tc_part.split("->")
+    # Определяем формат и разделители
+    if "," in tc_str and "->" in tc_str:
+        # Старый формат: filename.ext, MM:SS.ss -> MM:SS.ss
+        sep_idx = tc_str.index(",")
+        time_sep = "->"
+    elif ":" in tc_str and ("—" in tc_str or "–" in tc_str):
+        # Новый формат: filename: MM:SS.ss — MM:SS.ss
+        # Первое двоеточие — разделитель имени, остальные — внутри таймкодов
+        sep_idx = tc_str.index(":")
+        time_sep = "—" if "—" in tc_str else "–"
+    else:
+        return None
+
+    filename = tc_str[:sep_idx].strip()
+    tc_part = tc_str[sep_idx + 1:].strip()
+    parts = tc_part.split(time_sep)
     if len(parts) != 2:
         return None
 
-    # Пробуем точное совпадение, потом lowercase
-    file_key = filename_to_key.get(filename)
-    if not file_key:
-        file_key = filename_to_key.get(filename.lower())
-    if not file_key:
-        # Поиск по lowercase имени
-        lower_map = {k.lower(): v for k, v in filename_to_key.items()}
-        file_key = lower_map.get(filename.lower())
+    file_key = _resolve_file_key(filename, filename_to_key)
     if not file_key:
         print(f"  WARN: неизвестный файл '{filename}'")
         return None
@@ -210,17 +248,26 @@ def sec_to_frames(seconds: float, seq_fps: float) -> int:
     return round(seconds * seq_fps)
 
 
+def _path_to_posix(p: Path) -> str:
+    """Конвертирует Windows-путь в POSIX-формат с экранированием пробелов."""
+    abs_path = p.resolve()
+    posix = str(abs_path).replace("\\", "/")
+    if len(posix) > 1 and posix[1] == ":":
+        posix = "/" + posix
+    posix = re.sub(r' ', '%20', posix)
+    return posix
+
+
 def path_to_url(p: Path, relative: bool = False) -> str:
-    """Конвертирует путь в file:// URL."""
+    """Конвертирует путь в file:// URL (FCP 7 формат: file://localhost/)."""
     if relative:
         return p.name
-    else:
-        abs_path = p.resolve()
-        posix = str(abs_path).replace("\\", "/")
-        if len(posix) > 1 and posix[1] == ":":
-            posix = "/" + posix
-        posix = quote(posix, safe="/:@")
-        return f"file://localhost{posix}"
+    return f"file://localhost{_path_to_posix(p)}"
+
+
+def path_to_fcpxml_url(p: Path) -> str:
+    """Конвертирует путь в file:/// URL (FCPXML формат для DaVinci Resolve)."""
+    return f"file://{_path_to_posix(p)}"
 
 
 def make_rate_el(parent, timebase, ntsc):
@@ -246,14 +293,16 @@ def make_file_el(parent, file_id, file_info, seq_fps, define=True, relative=Fals
 
     media = ET.SubElement(file_el, "media")
 
-    vid = ET.SubElement(media, "video")
-    vid_sc = ET.SubElement(vid, "samplecharacteristics")
-    make_rate_el(vid_sc, file_info["timebase"], file_info["ntsc"])
-    ET.SubElement(vid_sc, "width").text = str(file_info["width"])
-    ET.SubElement(vid_sc, "height").text = str(file_info["height"])
-    ET.SubElement(vid_sc, "anamorphic").text = "FALSE"
-    ET.SubElement(vid_sc, "pixelaspectratio").text = "square"
-    ET.SubElement(vid_sc, "fielddominance").text = "none"
+    has_video = file_info["width"] > 0
+    if has_video:
+        vid = ET.SubElement(media, "video")
+        vid_sc = ET.SubElement(vid, "samplecharacteristics")
+        make_rate_el(vid_sc, file_info["timebase"], file_info["ntsc"])
+        ET.SubElement(vid_sc, "width").text = str(file_info["width"])
+        ET.SubElement(vid_sc, "height").text = str(file_info["height"])
+        ET.SubElement(vid_sc, "anamorphic").text = "FALSE"
+        ET.SubElement(vid_sc, "pixelaspectratio").text = "square"
+        ET.SubElement(vid_sc, "fielddominance").text = "none"
 
     aud = ET.SubElement(media, "audio")
     aud_sc = ET.SubElement(aud, "samplecharacteristics")
@@ -334,6 +383,7 @@ def build_xml(clips, files, seq_settings, seq_name, relative=False):
         src_duration = sec_to_frames(file_info["duration_sec"], seq_fps)
 
         is_first_def = file_id not in defined_files
+        has_video = file_info["width"] > 0
 
         v_clip_id = f"v-clip-{clip_id}"
         a_clip_id = f"a-clip-{clip_id}"
@@ -341,43 +391,50 @@ def build_xml(clips, files, seq_settings, seq_name, relative=False):
         if track_type == "slava":
             v_track_cur = v_track_slava
             a_track_cur = a_track_slava
-            v_clipindex_slava += 1
+            if has_video:
+                v_clipindex_slava += 1
+                v_clipindex = v_clipindex_slava
             a_clipindex_slava += 1
-            v_clipindex = v_clipindex_slava
             a_clipindex = a_clipindex_slava
             track_index = "1"
         else:
             v_track_cur = v_track_hero
             a_track_cur = a_track_hero
-            v_clipindex_hero += 1
+            if has_video:
+                v_clipindex_hero += 1
+                v_clipindex = v_clipindex_hero
             a_clipindex_hero += 1
-            v_clipindex = v_clipindex_hero
             a_clipindex = a_clipindex_hero
             track_index = "2"
 
-        # --- Video clipitem ---
-        v_clip = ET.SubElement(v_track_cur, "clipitem", id=v_clip_id)
-        ET.SubElement(v_clip, "masterclipid").text = masterclip_id
-        ET.SubElement(v_clip, "name").text = clip["name"][:60]
-        ET.SubElement(v_clip, "enabled").text = "TRUE"
-        ET.SubElement(v_clip, "duration").text = str(src_duration)
-        make_rate_el(v_clip, seq_timebase, seq_ntsc)
-        ET.SubElement(v_clip, "in").text = str(in_frames)
-        ET.SubElement(v_clip, "out").text = str(out_frames)
-        ET.SubElement(v_clip, "start").text = str(start_frames)
-        ET.SubElement(v_clip, "end").text = str(end_frames)
+        if has_video:
+            # --- Video clipitem ---
+            v_clip = ET.SubElement(v_track_cur, "clipitem", id=v_clip_id)
+            ET.SubElement(v_clip, "masterclipid").text = masterclip_id
+            ET.SubElement(v_clip, "name").text = clip["name"][:60]
+            ET.SubElement(v_clip, "enabled").text = "TRUE"
+            ET.SubElement(v_clip, "duration").text = str(src_duration)
+            make_rate_el(v_clip, seq_timebase, seq_ntsc)
+            ET.SubElement(v_clip, "in").text = str(in_frames)
+            ET.SubElement(v_clip, "out").text = str(out_frames)
+            ET.SubElement(v_clip, "start").text = str(start_frames)
+            ET.SubElement(v_clip, "end").text = str(end_frames)
 
-        make_file_el(v_clip, file_id, file_info, seq_fps,
-                     define=is_first_def, relative=relative)
+            make_file_el(v_clip, file_id, file_info, seq_fps,
+                         define=is_first_def, relative=relative)
 
-        st = ET.SubElement(v_clip, "sourcetrack")
-        ET.SubElement(st, "mediatype").text = "video"
+            st = ET.SubElement(v_clip, "sourcetrack")
+            ET.SubElement(st, "mediatype").text = "video"
 
-        link = ET.SubElement(v_clip, "link")
-        ET.SubElement(link, "linkclipref").text = a_clip_id
-        ET.SubElement(link, "mediatype").text = "audio"
-        ET.SubElement(link, "trackindex").text = track_index
-        ET.SubElement(link, "clipindex").text = str(a_clipindex)
+            link = ET.SubElement(v_clip, "link")
+            ET.SubElement(link, "linkclipref").text = a_clip_id
+            ET.SubElement(link, "mediatype").text = "audio"
+            ET.SubElement(link, "trackindex").text = track_index
+            ET.SubElement(link, "clipindex").text = str(a_clipindex)
+
+            if is_first_def:
+                defined_files.add(file_id)
+                is_first_def = False
 
         # --- Audio clipitem ---
         a_clip = ET.SubElement(a_track_cur, "clipitem", id=a_clip_id)
@@ -391,24 +448,26 @@ def build_xml(clips, files, seq_settings, seq_name, relative=False):
         ET.SubElement(a_clip, "start").text = str(start_frames)
         ET.SubElement(a_clip, "end").text = str(end_frames)
 
-        make_file_el(a_clip, file_id, file_info, seq_fps, define=False, relative=relative)
+        make_file_el(a_clip, file_id, file_info, seq_fps,
+                     define=is_first_def, relative=relative)
 
         st = ET.SubElement(a_clip, "sourcetrack")
         ET.SubElement(st, "mediatype").text = "audio"
-        ET.SubElement(st, "trackindex").text = track_index
+        ET.SubElement(st, "trackindex").text = "1"
 
-        link = ET.SubElement(a_clip, "link")
-        ET.SubElement(link, "linkclipref").text = v_clip_id
-        ET.SubElement(link, "mediatype").text = "video"
-        ET.SubElement(link, "trackindex").text = track_index
-        ET.SubElement(link, "clipindex").text = str(v_clipindex)
+        if has_video:
+            link = ET.SubElement(a_clip, "link")
+            ET.SubElement(link, "linkclipref").text = v_clip_id
+            ET.SubElement(link, "mediatype").text = "video"
+            ET.SubElement(link, "trackindex").text = track_index
+            ET.SubElement(link, "clipindex").text = str(v_clipindex)
 
         defined_files.add(file_id)
 
     return xmeml
 
 
-def xml_to_string(xmeml) -> str:
+def xml_to_string(xmeml, doctype="xmeml") -> str:
     """Конвертирует ElementTree в отформатированную XML-строку."""
     rough = ET.tostring(xmeml, encoding="unicode", xml_declaration=False)
     dom = minidom.parseString(rough)
@@ -416,7 +475,191 @@ def xml_to_string(xmeml) -> str:
     lines = pretty.split("\n")
     if lines[0].startswith("<?xml"):
         lines = lines[1:]
-    return '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE xmeml>\n' + "\n".join(lines)
+    return f'<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE {doctype}>\n' + "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# FCPXML (DaVinci Resolve)
+# ---------------------------------------------------------------------------
+
+def _sec_to_rational(seconds: float, timebase: int, ntsc: bool) -> str:
+    """Конвертирует секунды в рациональное время FCPXML (например '300/30s')."""
+    if ntsc:
+        # NTSC: frame = round(seconds * timebase * 1000 / 1001)
+        # duration = frame * 1001 / (timebase * 1000)  =>  frame*1001 / timebase*1000 s
+        frames = round(seconds * timebase * 1000 / 1001)
+        return f"{frames * 1001}/{timebase * 1000}s"
+    else:
+        frames = round(seconds * timebase)
+        return f"{frames}/{timebase}s"
+
+
+def _frame_duration(timebase: int, ntsc: bool) -> str:
+    """Длительность одного кадра в рациональном формате."""
+    if ntsc:
+        return f"1001/{timebase * 1000}s"
+    return f"1/{timebase}s"
+
+
+def build_fcpxml(clips, files, seq_settings, seq_name):
+    """Собирает FCPXML 1.9 из списка клипов (для DaVinci Resolve / FCP X)."""
+    seq_tb = seq_settings["timebase"]
+    seq_ntsc = seq_settings["ntsc"]
+
+    fcpxml = ET.Element("fcpxml", version="1.9")
+    resources = ET.SubElement(fcpxml, "resources")
+
+    # Формат секвенции
+    fd = _frame_duration(seq_tb, seq_ntsc)
+    fmt = ET.SubElement(resources, "format",
+                        id="r0",
+                        name=f"FFVideoFormat{seq_settings['height']}p{seq_tb}",
+                        frameDuration=fd,
+                        width=str(seq_settings["width"]),
+                        height=str(seq_settings["height"]))
+
+    # Медиа-ассеты
+    asset_ids = {}
+    asset_counter = 0
+    for file_key, info in files.items():
+        asset_counter += 1
+        aid = f"r{asset_counter}"
+        asset_ids[file_key] = aid
+
+        has_video = "1" if info["width"] > 0 else "0"
+        src_url = info["path"].name
+        dur = _sec_to_rational(info["duration_sec"], seq_tb, seq_ntsc)
+
+        asset_attrs = {
+            "id": aid,
+            "name": info["path"].stem,
+            "src": src_url,
+            "start": "0s",
+            "duration": dur,
+            "hasVideo": has_video,
+            "hasAudio": "1",
+        }
+        if has_video == "1":
+            asset_attrs["format"] = "r0"
+
+        ET.SubElement(resources, "asset", **asset_attrs)
+
+    # Library > Event > Project > Sequence
+    library = ET.SubElement(fcpxml, "library")
+    event = ET.SubElement(library, "event", name=seq_name)
+    project = ET.SubElement(event, "project", name=seq_name)
+
+    total_dur = _sec_to_rational(
+        max(c["seq_end"] for c in clips) / seq_settings["fps"] if clips else 0,
+        seq_tb, seq_ntsc)
+
+    sequence = ET.SubElement(project, "sequence",
+                             format="r0",
+                             duration=total_dur,
+                             tcStart="0s",
+                             tcFormat="NDF")
+
+    spine = ET.SubElement(sequence, "spine")
+
+    # Раскладываем клипы: Слава в spine, герой как connected clips.
+    # FCPXML spine — это основная дорожка (V1).
+    # Connected clips с lane="1" — дополнительный трек (V2).
+
+    # Сначала собираем gap-и и клипы Славы в spine
+    slava_clips = [c for c in clips if c["track"] == "slava"]
+    hero_clips = [c for c in clips if c["track"] == "hero"]
+
+    seq_fps = seq_settings["fps"]
+    spine_cursor = 0  # в кадрах
+
+    for clip in slava_clips:
+        # Вставляем gap если есть промежуток
+        if clip["seq_start"] > spine_cursor:
+            gap_dur = _sec_to_rational(
+                (clip["seq_start"] - spine_cursor) / seq_fps, seq_tb, seq_ntsc)
+            gap_offset = _sec_to_rational(spine_cursor / seq_fps, seq_tb, seq_ntsc)
+            gap_el = ET.SubElement(spine, "gap",
+                                   name="Gap",
+                                   offset=gap_offset,
+                                   duration=gap_dur)
+            # Проверяем, есть ли герой-клипы внутри этого gap
+            for hc in hero_clips:
+                if hc["seq_start"] >= spine_cursor and hc["seq_end"] <= clip["seq_start"]:
+                    h_offset = _sec_to_rational(
+                        (hc["seq_start"] - spine_cursor) / seq_fps, seq_tb, seq_ntsc)
+                    h_start = _sec_to_rational(hc["src_start"], seq_tb, seq_ntsc)
+                    h_dur = _sec_to_rational(
+                        (hc["seq_end"] - hc["seq_start"]) / seq_fps, seq_tb, seq_ntsc)
+                    ET.SubElement(gap_el, "asset-clip",
+                                  ref=asset_ids[hc["file_key"]],
+                                  lane="1",
+                                  name=hc["name"][:60],
+                                  offset=h_offset,
+                                  start=h_start,
+                                  duration=h_dur)
+                    hc["_placed"] = True
+
+        offset = _sec_to_rational(clip["seq_start"] / seq_fps, seq_tb, seq_ntsc)
+        start = _sec_to_rational(clip["src_start"], seq_tb, seq_ntsc)
+        dur = _sec_to_rational((clip["seq_end"] - clip["seq_start"]) / seq_fps,
+                               seq_tb, seq_ntsc)
+
+        clip_el = ET.SubElement(spine, "asset-clip",
+                                ref=asset_ids[clip["file_key"]],
+                                name=clip["name"][:60],
+                                offset=offset,
+                                start=start,
+                                duration=dur)
+
+        # Герой-клипы, которые попадают во время этого клипа Славы
+        for hc in hero_clips:
+            if hc.get("_placed"):
+                continue
+            if hc["seq_start"] >= clip["seq_start"] and hc["seq_start"] < clip["seq_end"]:
+                h_offset = _sec_to_rational(
+                    (hc["seq_start"] - clip["seq_start"]) / seq_fps, seq_tb, seq_ntsc)
+                h_start = _sec_to_rational(hc["src_start"], seq_tb, seq_ntsc)
+                h_dur = _sec_to_rational(
+                    (hc["seq_end"] - hc["seq_start"]) / seq_fps, seq_tb, seq_ntsc)
+                ET.SubElement(clip_el, "asset-clip",
+                              ref=asset_ids[hc["file_key"]],
+                              lane="1",
+                              name=hc["name"][:60],
+                              offset=h_offset,
+                              start=h_start,
+                              duration=h_dur)
+                hc["_placed"] = True
+
+        spine_cursor = clip["seq_end"]
+
+    # Оставшиеся герой-клипы после последнего клипа Славы
+    unplaced = [hc for hc in hero_clips if not hc.get("_placed")]
+    if unplaced:
+        # Добавляем gap до конца и вешаем на него
+        last_hero_end = max(hc["seq_end"] for hc in unplaced)
+        if last_hero_end > spine_cursor:
+            gap_dur = _sec_to_rational(
+                (last_hero_end - spine_cursor) / seq_fps, seq_tb, seq_ntsc)
+            gap_offset = _sec_to_rational(spine_cursor / seq_fps, seq_tb, seq_ntsc)
+            gap_el = ET.SubElement(spine, "gap",
+                                   name="Gap",
+                                   offset=gap_offset,
+                                   duration=gap_dur)
+            for hc in unplaced:
+                h_offset = _sec_to_rational(
+                    (hc["seq_start"] - spine_cursor) / seq_fps, seq_tb, seq_ntsc)
+                h_start = _sec_to_rational(hc["src_start"], seq_tb, seq_ntsc)
+                h_dur = _sec_to_rational(
+                    (hc["seq_end"] - hc["seq_start"]) / seq_fps, seq_tb, seq_ntsc)
+                ET.SubElement(gap_el, "asset-clip",
+                              ref=asset_ids[hc["file_key"]],
+                              lane="1",
+                              name=hc["name"][:60],
+                              offset=h_offset,
+                              start=h_start,
+                              duration=h_dur)
+
+    return fcpxml
 
 
 # ---------------------------------------------------------------------------
@@ -426,6 +669,8 @@ def xml_to_string(xmeml) -> str:
 def main():
     parser = argparse.ArgumentParser(description="Генерация FCP 7 XML черновой сборки из script.csv")
     parser.add_argument("project_dir", type=Path, help="Путь к папке проекта")
+    parser.add_argument("--davinci", action="store_true",
+                        help="Дополнительно генерировать FCPXML 1.9 для DaVinci Resolve")
     args = parser.parse_args()
 
     project_dir = args.project_dir.resolve()
@@ -557,6 +802,17 @@ def main():
         label = ("абсолютные пути (локальный)" if suffix == "_local"
                  else "относительные пути (для zip)")
         print(f"Сохранено ({label}): {out_path}")
+
+    # FCPXML для DaVinci Resolve
+    if args.davinci:
+        fcpxml = build_fcpxml(clips, files, seq_settings, seq_name)
+        xml_str = xml_to_string(fcpxml, doctype="fcpxml")
+
+        out_path = assembly_dir / f"{project_name}_rough_cut.fcpxml"
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write(xml_str)
+
+        print(f"Сохранено (FCPXML / DaVinci Resolve): {out_path}")
 
 
 if __name__ == "__main__":
