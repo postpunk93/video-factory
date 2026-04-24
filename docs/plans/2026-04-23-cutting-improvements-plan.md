@@ -69,9 +69,12 @@ git commit -m "feat(cut_pauses): добавить константы INTERJECTIO
 ```python
 import re
 
+_EDGE_PUNCT_RE = re.compile(r"^[^\w]+|[^\w]+$")
+
+
 def normalize_word(word: str) -> str:
     """Нижний регистр + убрать пунктуацию по краям."""
-    return re.sub(r"[^\wа-яё]", "", word.lower()).strip()
+    return _EDGE_PUNCT_RE.sub("", word.lower())
 
 
 def should_cut_word(word_text: str, profile: str) -> str | None:

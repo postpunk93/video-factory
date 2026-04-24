@@ -35,9 +35,12 @@ STUTTER_RE = re.compile(r"^([а-яёa-z])(-\1)+(-[а-яёa-z]+)?$")
 GAP_BETWEEN_SEGMENTS = 0.15  # 150 ms gap to keep speech natural
 
 
+_EDGE_PUNCT_RE = re.compile(r"^[^\w]+|[^\w]+$")
+
+
 def normalize_word(word: str) -> str:
     """Нижний регистр + убрать пунктуацию по краям."""
-    return re.sub(r"[^\wа-яё]", "", word.lower()).strip()
+    return _EDGE_PUNCT_RE.sub("", word.lower())
 
 
 def should_cut_word(word_text: str, profile: str) -> str | None:
