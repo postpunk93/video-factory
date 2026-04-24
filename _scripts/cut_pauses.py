@@ -35,6 +35,36 @@ STUTTER_RE = re.compile(r"^([а-яёa-z])(-\1)+(-[а-яёa-z]+)?$")
 GAP_BETWEEN_SEGMENTS = 0.15  # 150 ms gap to keep speech natural
 
 
+def normalize_word(word: str) -> str:
+    """Нижний регистр + убрать пунктуацию по краям."""
+    return re.sub(r"[^\wа-яё]", "", word.lower()).strip()
+
+
+def should_cut_word(word_text: str, profile: str) -> str | None:
+    """Определяет, нужно ли вырезать слово. Возвращает причину (str) или None.
+
+    profile: 'slava' — агрессивный, вырезает FILLER_WORDS + общие паттерны.
+             'hero'  — мягкий, только междометия/заикания (FILLER_WORDS не трогаем).
+    """
+    norm = normalize_word(word_text)
+    if not norm:
+        return None
+
+    # Заикания — оба профиля
+    if STUTTER_RE.match(norm):
+        return "stutter"
+
+    # Междометия — оба профиля
+    if norm in INTERJECTIONS:
+        return "interjection"
+
+    # Слова-паразиты — только slava
+    if profile == "slava" and norm in FILLER_WORDS:
+        return "filler"
+
+    return None
+
+
 def check_ffmpeg():
     """Check that ffmpeg is available in PATH."""
     if not shutil.which("ffmpeg"):
