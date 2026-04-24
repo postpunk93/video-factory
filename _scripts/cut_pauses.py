@@ -77,23 +77,27 @@ def mark_repeat_duplicates(words: list[dict], max_gap: float = 1.5) -> list[bool
     if len(words) < 2:
         return [False] * len(words)
 
+    # Один проход нормализации: в горячем цикле повторно не считаем.
+    norms = [normalize_word(w.get("word", "")) for w in words]
+
     mask = [False] * len(words)
     # Проходим с конца: i-й остаётся, предыдущие совпадающие режем
     for i in range(len(words) - 1, 0, -1):
-        prev = i - 1
         if mask[i]:  # сам уже вырезан — не якорь
             continue
+        cur_norm = norms[i]
+        if not cur_norm:
+            continue
+        prev = i - 1
         while prev >= 0:
-            cur_norm = normalize_word(words[i].get("word", ""))
-            prev_norm = normalize_word(words[prev].get("word", ""))
-            if not cur_norm or not prev_norm or cur_norm != prev_norm:
+            if not norms[prev] or norms[prev] != cur_norm:
                 break
             gap = words[i].get("start", 0) - words[prev].get("end", 0)
             if gap > max_gap or gap < 0:
                 break
             mask[prev] = True
-            # anchor для следующей итерации не меняем — сравниваем с тем же i
-            i = prev  # но продолжаем свёртку влево
+            # Якорь движется влево по свёртке; norms[prev] == cur_norm по инварианту.
+            i = prev
             prev = i - 1
     return mask
 
