@@ -512,7 +512,7 @@ def cmd_search(project_dir: Path) -> None:
     print()
 
     rows_out = []
-    stats = {"single": 0, "multiple": 0, "not_found": 0}
+    stats = {"single": 0, "multiple": 0, "multi_part": 0, "partial": 0, "not_found": 0}
 
     for line in script_lines:
         speaker = line["speaker"]
@@ -529,30 +529,48 @@ def cmd_search(project_dir: Path) -> None:
         if not filtered:
             filtered = transcripts
 
-        candidates = find_candidates(line["text"], filtered)
-        candidates.sort(key=lambda c: c["start"])
+        result = find_quote_parts(line["text"], filtered)
+        parts = result["parts"]
+        unmatched = result["unmatched"]
 
-        if len(candidates) == 0:
-            status = "not_found"
-            stats["not_found"] += 1
-            print(f"  ✗ Строка {line['row_idx']}: НЕ НАЙДЕНО — {line['text'][:60]}")
-        elif len(candidates) == 1:
+        if unmatched:
+            status = "partial"
+            stats["partial"] = stats.get("partial", 0) + 1
+        elif len(parts) > 1:
+            status = "multi_part"
+            stats["multi_part"] = stats.get("multi_part", 0) + 1
+        elif len(parts) == 1 and len(parts[0]["candidates"]) == 1:
             status = "single"
             stats["single"] += 1
-            c = candidates[0]
-            print(f"  ✓ Строка {line['row_idx']}: {fmt_tc(c['start'])} -> {fmt_tc(c['end'])} — {line['text'][:60]}")
-        else:
+        elif len(parts) == 1 and len(parts[0]["candidates"]) > 1:
             status = "multiple"
             stats["multiple"] += 1
-            locs = ", ".join(fmt_tc(c["start"]) for c in candidates)
-            print(f"  ? Строка {line['row_idx']}: {len(candidates)} кандидатов [{locs}] — {line['text'][:60]}")
+        else:
+            status = "not_found"
+            stats["not_found"] += 1
+
+        # Вывод
+        if status == "single":
+            c = parts[0]["candidates"][0]
+            print(f"  ✓ Строка {line['row_idx']}: {fmt_tc(c['start'])} -> {fmt_tc(c['end'])} — {line['text'][:60]}")
+        elif status == "multi_part":
+            print(f"  ≈ Строка {line['row_idx']}: {len(parts)} частей — {line['text'][:60]}")
+        elif status == "partial":
+            print(f"  ⚠ Строка {line['row_idx']}: {len(parts)} найдено, {len(unmatched)} нет — {line['text'][:60]}")
+        elif status == "multiple":
+            locs = ", ".join(fmt_tc(c["start"]) for c in parts[0]["candidates"])
+            print(f"  ? Строка {line['row_idx']}: {len(parts[0]['candidates'])} кандидатов [{locs}] — {line['text'][:60]}")
+        else:
+            print(f"  ✗ Строка {line['row_idx']}: НЕ НАЙДЕНО — {line['text'][:60]}")
 
         rows_out.append({
             "row_idx": line["row_idx"],
             "speaker": speaker,
             "col": line["col"],
             "text": line["text"],
-            "candidates": candidates,
+            "parts": parts,
+            "unmatched": unmatched,
+            "mode": result["mode"],
             "status": status,
         })
 
@@ -567,9 +585,11 @@ def cmd_search(project_dir: Path) -> None:
         json.dump(output, f, ensure_ascii=False, indent=2)
 
     print(f"\n=== Статистика ===")
-    print(f"  Единственный кандидат: {stats['single']}")
-    print(f"  Несколько кандидатов:  {stats['multiple']}")
-    print(f"  Не найдено:           {stats['not_found']}")
+    print(f"  Single:     {stats['single']}")
+    print(f"  Multiple:   {stats['multiple']}")
+    print(f"  Multi-part: {stats.get('multi_part', 0)}")
+    print(f"  Partial:    {stats.get('partial', 0)}")
+    print(f"  Not found:  {stats['not_found']}")
     print(f"\nРезультат: {out_path}")
 
 
