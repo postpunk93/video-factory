@@ -541,12 +541,16 @@ result = find_quote_parts(line["text"], filtered)
 parts = result["parts"]
 unmatched = result["unmatched"]
 
-if unmatched:
+if not parts and unmatched:
+    # Все предложения провалились — это not_found, а не partial.
+    status = "not_found"
+    stats["not_found"] += 1
+elif unmatched:
     status = "partial"
-    stats["partial"] = stats.get("partial", 0) + 1
+    stats["partial"] += 1
 elif len(parts) > 1:
     status = "multi_part"
-    stats["multi_part"] = stats.get("multi_part", 0) + 1
+    stats["multi_part"] += 1
 elif len(parts) == 1 and len(parts[0]["candidates"]) == 1:
     status = "single"
     stats["single"] += 1
