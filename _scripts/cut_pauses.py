@@ -68,6 +68,36 @@ def should_cut_word(word_text: str, profile: str) -> str | None:
     return None
 
 
+def mark_repeat_duplicates(words: list[dict], max_gap: float = 1.5) -> list[bool]:
+    """Возвращает маску того же размера: True — слово нужно вырезать (повтор).
+
+    Правило: если токен[i] == токен[i-1] (нормализованно) и start[i] - end[i-1] < max_gap,
+    то вырезаем word[i-1] (оставляем последний повтор). Работает каскадно на сериях 3+.
+    """
+    if len(words) < 2:
+        return [False] * len(words)
+
+    mask = [False] * len(words)
+    # Проходим с конца: i-й остаётся, предыдущие совпадающие режем
+    for i in range(len(words) - 1, 0, -1):
+        prev = i - 1
+        if mask[i]:  # сам уже вырезан — не якорь
+            continue
+        while prev >= 0:
+            cur_norm = normalize_word(words[i].get("word", ""))
+            prev_norm = normalize_word(words[prev].get("word", ""))
+            if not cur_norm or not prev_norm or cur_norm != prev_norm:
+                break
+            gap = words[i].get("start", 0) - words[prev].get("end", 0)
+            if gap > max_gap or gap < 0:
+                break
+            mask[prev] = True
+            # anchor для следующей итерации не меняем — сравниваем с тем же i
+            i = prev  # но продолжаем свёртку влево
+            prev = i - 1
+    return mask
+
+
 def check_ffmpeg():
     """Check that ffmpeg is available in PATH."""
     if not shutil.which("ffmpeg"):
