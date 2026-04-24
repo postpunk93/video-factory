@@ -164,6 +164,125 @@ def _lcs_length(a: list[str], b: list[str]) -> int:
     return prev[m]
 
 
+# ─── Разбиение на предложения и склейка частей ─────────────────────────────
+
+SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+
+
+def split_sentences(text: str) -> list[str]:
+    """Делит текст по [.!?]. Пустые/тривиальные (<3 слов) игнорируются."""
+    parts = [s.strip() for s in SENTENCE_SPLIT_RE.split(text) if s.strip()]
+    return [p for p in parts if len(p.split()) >= 3]
+
+
+def merge_adjacent_parts(parts: list[dict], max_gap: float = 3.0) -> list[dict]:
+    """Склеивает соседние parts, которые в одном файле и разрыв < max_gap сек."""
+    if len(parts) < 2:
+        return parts
+    merged = [parts[0]]
+    for p in parts[1:]:
+        last = merged[-1]
+        if (p["file"] == last["file"]
+                and 0 <= p["start"] - last["end"] < max_gap):
+            merged[-1] = {
+                "file": last["file"],
+                "start": last["start"],
+                "end": p["end"],
+                "text": last["text"] + " " + p["text"],
+            }
+        else:
+            merged.append(p)
+    return merged
+
+
+def find_quote_parts(phrase: str, transcripts: dict) -> dict:
+    """Главная функция поиска. Возвращает словарь с ключами parts/unmatched/mode.
+
+    Структура:
+        {
+            "parts": [{text, candidates: [{file, start, end}, ...]}],
+            "unmatched": [str],
+            "mode": "whole" | "split",
+        }
+
+    Для whole-match `parts` содержит один элемент со списком candidates длины 1.
+    Для split-match каждый part имеет только свои candidates.
+    """
+    whole = fuzzy_whole_match(phrase, transcripts)
+    if whole is not None:
+        return {
+            "parts": [{
+                "text": phrase,
+                "candidates": [{
+                    "file": whole["file"],
+                    "start": whole["start"],
+                    "end": whole["end"],
+                }],
+            }],
+            "unmatched": [],
+            "mode": "whole",
+        }
+
+    sentences = split_sentences(phrase)
+    if not sentences:
+        # Короткая фраза — одна "часть" с обычным кандидатским поиском.
+        cands = find_candidates(phrase, transcripts)
+        return {
+            "parts": [{
+                "text": phrase,
+                "candidates": [
+                    {"file": c["file"], "start": c["start"], "end": c["end"]}
+                    for c in cands
+                ],
+            }],
+            "unmatched": [],
+            "mode": "split",
+        }
+
+    parts_out = []
+    unmatched = []
+    for s in sentences:
+        cands = find_candidates(s, transcripts)
+        cands.sort(key=lambda c: c["start"])
+        if not cands:
+            unmatched.append(s)
+            continue
+        parts_out.append({
+            "text": s,
+            "candidates": [
+                {"file": c["file"], "start": c["start"], "end": c["end"]}
+                for c in cands
+            ],
+        })
+
+    # Мёрдж соседних: только для частей с единственным кандидатом.
+    single_cand_parts = [
+        {"file": p["candidates"][0]["file"],
+         "start": p["candidates"][0]["start"],
+         "end": p["candidates"][0]["end"],
+         "text": p["text"]}
+        for p in parts_out if len(p["candidates"]) == 1
+    ]
+    merged = merge_adjacent_parts(single_cand_parts)
+
+    # Сливаем обратно: если все parts_out имеют 1 кандидата — возвращаем merged.
+    # Иначе оставляем как есть (агент-ревьюер выберет).
+    if all(len(p["candidates"]) == 1 for p in parts_out):
+        parts_out = [
+            {
+                "text": m["text"],
+                "candidates": [{"file": m["file"], "start": m["start"], "end": m["end"]}],
+            }
+            for m in merged
+        ]
+
+    return {
+        "parts": parts_out,
+        "unmatched": unmatched,
+        "mode": "split",
+    }
+
+
 # ─── Поиск кандидатов ──────────────────────────────────────────────────────
 
 def find_candidates(phrase: str, transcripts: dict) -> list[dict]:
