@@ -103,8 +103,8 @@ def _safe_time(word: dict, field: str, words: list[dict], idx: int) -> float:
 
 # ─── Fuzzy whole-match (LCS) ───────────────────────────────────────────────
 
-def fuzzy_whole_match(phrase: str, transcripts: dict, min_score: float = 0.85):
-    """Smith-Waterman по словам. Возвращает лучший part (dict) или None.
+def fuzzy_whole_match(phrase: str, transcripts: dict, min_score: float = 0.85) -> dict | None:
+    """LCS по скользящему окну. Возвращает лучший part (dict) или None.
 
     Возвращаемый part: {file, start, end, score, words_matched, total_words}
     Score = words_matched / total_words_in_phrase.
@@ -117,11 +117,14 @@ def fuzzy_whole_match(phrase: str, transcripts: dict, min_score: float = 0.85):
 
     for filename, tdata in transcripts.items():
         words = tdata["words"]
-        twords = [normalize(w.get("word", "")) for w in words]
+        # Нормализованные токены берём из кеша, иначе считаем на лету (fallback).
+        twords = tdata.get("norm_words") or [normalize(w.get("word", "")) for w in words]
 
-        n, m = len(pwords), len(twords)
+        m = len(twords)
+        if m == 0:
+            continue
 
-        # Скользящее окно поиска
+        # Окно чуть длиннее фразы: допускаем вставки/замены слов.
         window_len = int(len(pwords) * 1.3) + 5
         for start_idx in range(0, max(1, m - window_len + 1)):
             end_idx = min(m, start_idx + window_len)
@@ -281,11 +284,13 @@ def load_transcripts(project_dir: Path) -> dict:
 
         source = data.get("source", jp.stem.replace(".transcript", ""))
         full_text, char_map = build_text_index(all_words)
+        norm_words = [normalize(w.get("word", "")) for w in all_words]
 
         result[source] = {
             "words": all_words,
             "full_text": full_text,
             "char_map": char_map,
+            "norm_words": norm_words,
         }
         print(f"  Транскрипт: {source} — {len(all_words)} слов")
 
