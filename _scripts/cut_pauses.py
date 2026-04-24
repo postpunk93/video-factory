@@ -121,6 +121,10 @@ def parse_args():
     parser.add_argument("--output", help="Папка или файл для результата")
     parser.add_argument("--model", default="large-v3", help="Модель Whisper (default: large-v3)")
     parser.add_argument("--pause", type=float, default=0.5, help="Порог паузы в секундах (default: 0.5)")
+    parser.add_argument(
+        "--profile", choices=["slava", "hero"], default="slava",
+        help="Профиль чистки: slava (агрессивный + FILLER_WORDS) или hero (мягкий, только оговорки)"
+    )
     parser.add_argument("--dry-run", action="store_true", help="Только показать отчёт, не обрабатывать")
     parser.add_argument("--save-transcript", action="store_true", help="Сохранить транскрипцию в JSON")
     return parser.parse_args()
@@ -264,36 +268,55 @@ def transcribe(model, filepath):
     return words
 
 
-def filter_words(words, pause_threshold):
-    """Filter out filler words, stutters, noise tokens. Return clean words and stats."""
-    stats = {"fillers": 0, "stutters": 0, "noise": 0, "zero_duration": 0}
+def filter_words(words, profile):
+    """Фильтрация слов по профилю. Возвращает (clean_words, stats).
+
+    profile: 'slava' — агрессивный (оговорки + FILLER_WORDS),
+             'hero'  — мягкий (только оговорки, FILLER_WORDS не трогаем).
+    """
+    stats = {
+        "stutters": 0,       # заикания вида "я-я-я" (через STUTTER_RE)
+        "interjections": 0,  # междометия (эм, ээ, хм, ...)
+        "fillers": 0,        # слова-паразиты (только profile=slava)
+        "repeats": 0,        # подряд идущие повторы (mark_repeat_duplicates)
+        "noise": 0,          # [...] токены
+        "zero_duration": 0,  # галлюцинации Whisper (end <= start)
+    }
     clean = []
 
+    # Маска подряд-повторов рассчитывается один раз на весь массив.
+    repeat_mask = mark_repeat_duplicates(words)
+
     for i, w in enumerate(words):
-        # Zero-duration words: Whisper hallucinations
+        # Галлюцинации Whisper: нулевая или отрицательная длительность
         if w["end"] <= w["start"]:
             stats["zero_duration"] += 1
             continue
 
-        text = w["word"].lower().strip()
+        text = w["word"].strip()
+        lowered = text.lower()
 
-        # Noise tokens: anything in square brackets
-        if text.startswith("[") and text.endswith("]"):
+        # Шум: [...] токены
+        if lowered.startswith("[") and lowered.endswith("]"):
             stats["noise"] += 1
             continue
 
-        # Filler words
-        if text in FILLER_WORDS:
-            stats["fillers"] += 1
+        # Подряд идущие повторы (я, я, я) — режем все, кроме последнего в серии
+        if repeat_mask[i]:
+            stats["repeats"] += 1
             continue
 
-        # Stutters: same word twice in a row — skip the first occurrence
-        # We check if the NEXT word is the same; if so, skip current
-        if i + 1 < len(words):
-            next_text = words[i + 1]["word"].lower().strip()
-            if text == next_text and text not in FILLER_WORDS:
-                stats["stutters"] += 1
-                continue
+        # Классификация: stutter / interjection / filler
+        reason = should_cut_word(text, profile)
+        if reason == "stutter":
+            stats["stutters"] += 1
+            continue
+        if reason == "interjection":
+            stats["interjections"] += 1
+            continue
+        if reason == "filler":
+            stats["fillers"] += 1
+            continue
 
         clean.append(w)
 
@@ -344,8 +367,10 @@ def print_report(filepath, duration, words, clean_words, segments, word_stats, p
     print(f"Файл: {filepath.name} ({format_duration(duration)})")
     print(f"Найдено слов: {len(words)}")
     print(f"Удалено пауз: {pause_stats['count']} (суммарно {format_duration(pause_stats['total_duration'])})")
+    print(f"Удалено заиканий: {word_stats['stutters']}")
+    print(f"Удалено междометий: {word_stats['interjections']}")
+    print(f"Удалено повторов: {word_stats['repeats']}")
     print(f"Удалено филлеров: {word_stats['fillers']}")
-    print(f"Удалено повторов: {word_stats['stutters']}")
     print(f"Удалено шумов: {word_stats['noise']}")
     if word_stats.get("zero_duration", 0) > 0:
         print(f"Удалено галлюцинаций: {word_stats['zero_duration']}")
@@ -463,7 +488,7 @@ def process_file(model, filepath, args):
         save_transcript(words, filepath)
 
     # Phase 2: Filter
-    clean_words, word_stats = filter_words(words, args.pause)
+    clean_words, word_stats = filter_words(words, args.profile)
     segments, pause_stats = build_segments(clean_words, args.pause)
 
     # Report
