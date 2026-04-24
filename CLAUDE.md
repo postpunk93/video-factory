@@ -14,10 +14,12 @@ Design docs are in `docs/plans/`. Original cut_pauses spec archived in `docs/arc
 
 ```bash
 pip install faster-whisper tqdm
-python _scripts/cut_pauses.py <input_file_or_dir> [--output PATH] [--model large-v3] [--pause 0.5] [--save-transcript]
+python _scripts/cut_pauses.py <input_file_or_dir> [--output PATH] [--model large-v3] [--pause 0.5] [--profile slava|hero] [--save-transcript]
 ```
 
-Requires `ffmpeg` and `ffprobe` on PATH. CUDA is auto-detected with CPU fallback.
+`--profile slava` (по умолчанию) — агрессивная чистка для войсовера: FILLER_WORDS + заикания + междометия + повторы. `--profile hero` — мягкая чистка интервью героя: только заикания, междометия и подряд идущие повторы; FILLER_WORDS не трогаются. Whisper ru-транскрипт редко содержит сами междометия/заикания — на практике на hero-профиле режутся в основном повторы и паузы.
+
+Requires `ffmpeg` and `ffprobe` on PATH. CUDA is auto-detected with CPU fallback. Input должен быть видеоформат (`.mp4/.mov/.mkv/.avi`) — аудио `.m4a/.mp3/.wav` пока не поддерживается.
 
 ### transcribe.py — транскрибация с диаризацией
 
@@ -40,6 +42,8 @@ python _scripts/match_timecodes.py compact <project_dir>    # Генерация
 Требует `ffmpeg` на PATH (для silencedetect). Транскрипты должны быть в `transcripts/*.transcript.json`.
 Проход 2 (агентная верификация) выполняется скиллом `/match-timecodes`.
 
+`candidates.json` содержит `rows[i]` с полями `parts[]` (каждая часть: `text + candidates[]`), `unmatched[]`, `mode` (`whole`/`split`), `status` (`single`/`multiple`/`multi_part`/`partial`/`not_found`). Составные цитаты автоматически определяются через `fuzzy_whole_match` (LCS) + split по предложениям. Агентная верификация пишет в `verified.json` поле `chosen_parts[]` — по одному выбору на каждую часть.
+
 ### build_xml.py — генерация FCP 7 XML черновой сборки
 
 ```bash
@@ -47,6 +51,14 @@ python _scripts/build_xml.py <project_dir> [--davinci]
 ```
 
 Сканирует `raw/voiceover/` и `raw/interviews/` (видео + аудио форматы), получает метаданные через `ffprobe`, читает `script/script.csv` и генерирует FCP 7 XML в `assembly/`. Выходные файлы: `{name}_rough_cut.xml` (относительные пути) и `{name}_rough_cut_local.xml` (абсолютные). С флагом `--davinci` дополнительно генерирует `{name}_rough_cut.fcpxml` (FCPXML 1.9 для DaVinci Resolve). Требует `ffprobe` на PATH.
+
+**Формат таймкодов в CSV:** одна реплика может быть составной. Формат части — `file.ext: MM:SS.ss — MM:SS.ss` (двоеточие + em-dash, новый) или `file.ext, MM:SS.ss -> MM:SS.ss` (старый). Составные цитаты склеиваются разделителем ` || `, например:
+
+```
+Тюльпаны.mp4: 01:00.00 — 01:03.00 || Тюльпаны 2.mp4: 02:10.00 — 02:12.00
+```
+
+`build_xml.py` раскладывает все части впритык на треке спикера (V1 — Слава, V2 — Герой); имя клипа получает суффикс `(i/n)`.
 
 ## Skills
 
