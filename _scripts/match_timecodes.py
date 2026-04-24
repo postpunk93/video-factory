@@ -101,6 +101,66 @@ def _safe_time(word: dict, field: str, words: list[dict], idx: int) -> float:
     return 0.0
 
 
+# ─── Fuzzy whole-match (LCS) ───────────────────────────────────────────────
+
+def fuzzy_whole_match(phrase: str, transcripts: dict, min_score: float = 0.85):
+    """Smith-Waterman по словам. Возвращает лучший part (dict) или None.
+
+    Возвращаемый part: {file, start, end, score, words_matched, total_words}
+    Score = words_matched / total_words_in_phrase.
+    """
+    pwords = normalize(phrase).split()
+    if len(pwords) < 3:
+        return None
+
+    best = None
+
+    for filename, tdata in transcripts.items():
+        words = tdata["words"]
+        twords = [normalize(w.get("word", "")) for w in words]
+
+        n, m = len(pwords), len(twords)
+
+        # Скользящее окно поиска
+        window_len = int(len(pwords) * 1.3) + 5
+        for start_idx in range(0, max(1, m - window_len + 1)):
+            end_idx = min(m, start_idx + window_len)
+            window = twords[start_idx:end_idx]
+
+            lcs_len = _lcs_length(pwords, window)
+            score = lcs_len / len(pwords)
+
+            if score >= min_score and (best is None or score > best["score"]):
+                start_t = _safe_time(words[start_idx], "start", words, start_idx)
+                end_t = _safe_time(words[end_idx - 1], "end", words, end_idx - 1)
+                best = {
+                    "file": filename,
+                    "start": round(start_t, 2),
+                    "end": round(end_t, 2),
+                    "score": round(score, 3),
+                    "words_matched": lcs_len,
+                    "total_words": len(pwords),
+                }
+    return best
+
+
+def _lcs_length(a: list[str], b: list[str]) -> int:
+    """Длина LCS двух списков слов."""
+    n, m = len(a), len(b)
+    if n == 0 or m == 0:
+        return 0
+    prev = [0] * (m + 1)
+    for i in range(1, n + 1):
+        cur = [0] * (m + 1)
+        for j in range(1, m + 1):
+            if a[i - 1] == b[j - 1]:
+                cur[j] = prev[j - 1] + 1
+            else:
+                cur[j] = max(prev[j], cur[j - 1])
+        prev = cur
+    return prev[m]
+
+
 # ─── Поиск кандидатов ──────────────────────────────────────────────────────
 
 def find_candidates(phrase: str, transcripts: dict) -> list[dict]:
