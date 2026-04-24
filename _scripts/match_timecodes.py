@@ -599,6 +599,22 @@ def cmd_search(project_dir: Path) -> None:
 
 # ─── Команда: snap ─────────────────────────────────────────────────────────
 
+def _get_chosen_parts(row: dict) -> list[dict]:
+    """Возвращает список chosen_parts из строки verified.json.
+
+    Поддерживает оба формата:
+    - новый: row["chosen_parts"] = [{file, start, end, text?}, ...]
+    - старый: row["chosen"] = {file, start, end} → нормализуется в список из одного элемента.
+    """
+    chosen_parts = row.get("chosen_parts")
+    if chosen_parts is not None:
+        return [p for p in chosen_parts if p and p.get("file")]
+    chosen = row.get("chosen")
+    if chosen and chosen.get("file"):
+        return [chosen]
+    return []
+
+
 def cmd_snap(project_dir: Path) -> None:
     """Pass 3: привязка таймкодов к паузам (тишине)."""
     print(f"=== Привязка к тишине: {project_dir.name} ===\n")
@@ -611,12 +627,13 @@ def cmd_snap(project_dir: Path) -> None:
     with open(verified_path, "r", encoding="utf-8") as f:
         verified = json.load(f)
 
-    # Собираем уникальные файлы
+    # Собираем уникальные файлы из всех частей всех строк.
     files_needed = set()
     for row in verified["rows"]:
-        chosen = row.get("chosen", {})
-        if chosen and chosen.get("file"):
-            files_needed.add(chosen["file"])
+        parts = _get_chosen_parts(row)
+        for p in parts:
+            if p.get("file"):
+                files_needed.add(p["file"])
 
     # Определяем где искать видеофайлы
     raw_dirs = [
@@ -649,32 +666,36 @@ def cmd_snap(project_dir: Path) -> None:
 
     # Привязываем таймкоды
     for row in verified["rows"]:
-        chosen = row.get("chosen", {})
-        if not chosen or not chosen.get("file"):
+        parts = _get_chosen_parts(row)
+        if not parts:
             continue
 
-        fname = chosen["file"]
-        silences = silence_cache.get(fname, [])
+        snapped_parts: list[tuple[str, float, float]] = []
+        for p in parts:
+            fname = p.get("file")
+            if not fname:
+                continue
+            silences = silence_cache.get(fname, [])
+            ss, se = snap_to_silence(p["start"], p["end"], silences)
+            snapped_parts.append((fname, ss, se))
 
-        start = chosen["start"]
-        end = chosen["end"]
+        if not snapped_parts:
+            continue
 
-        snapped_start, snapped_end = snap_to_silence(start, end, silences)
+        # Формат: "file: MM:SS.ss — MM:SS.ss" на часть, разделитель " || ".
+        tc_strs = [f"{fn}: {fmt_tc(ss)} — {fmt_tc(se)}" for fn, ss, se in snapped_parts]
+        tc_str = " || ".join(tc_strs)
 
-        tc_str = f"{fname}, {fmt_tc(snapped_start)} -> {fmt_tc(snapped_end)}"
-
-        # Записываем в CSV (col уже указывает на колонку таймкодов: 1 или 3)
         ridx = row["row_idx"]
         tc_col = row.get("col", 1)
-
-        # row_idx — номер строки в CSV (1-based, 1 = заголовок)
-        csv_idx = ridx - 1  # индекс в массиве (0-based)
+        csv_idx = ridx - 1  # 1-based → 0-based
         if csv_idx < len(csv_rows):
             while len(csv_rows[csv_idx]) <= tc_col:
                 csv_rows[csv_idx].append("")
             csv_rows[csv_idx][tc_col] = tc_str
 
-        print(f"  Строка {ridx}: {fmt_tc(start)}->{fmt_tc(snapped_start)}  {fmt_tc(end)}->{fmt_tc(snapped_end)}")
+        preview = tc_str if len(tc_str) <= 80 else tc_str[:77] + "..."
+        print(f"  Строка {ridx}: {len(snapped_parts)} часть(и) — {preview}")
 
     with open(csv_path, "w", encoding="utf-8", newline="") as f:
         writer = csv.writer(f)
