@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""cut_pauses.py — removes pauses, filler words, stutters, and noise from video."""
+"""cut_pauses.py — removes pauses, fillers, interjections, stutters, repeats, and noise (profile: slava|hero)."""
 
 import argparse
 import json
@@ -294,10 +294,9 @@ def filter_words(words, profile):
             continue
 
         text = w["word"].strip()
-        lowered = text.lower()
 
         # Шум: [...] токены
-        if lowered.startswith("[") and lowered.endswith("]"):
+        if text.startswith("[") and text.endswith("]"):
             stats["noise"] += 1
             continue
 
