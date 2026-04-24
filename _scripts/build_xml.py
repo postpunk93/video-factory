@@ -201,6 +201,57 @@ def _resolve_file_key(name: str, filename_to_key: dict) -> str | None:
     return None
 
 
+def _append_parts_as_clips(
+    clips: list,
+    parts: list,
+    track: str,
+    label: str,
+    row_idx: int,
+    cursor: int,
+    seq_fps: float,
+) -> int:
+    """Добавляет клипы всех частей впритык на таймлайне. Возвращает суммарную длительность в кадрах."""
+    total_added = 0
+    n_parts = len(parts)
+    for i, (file_key, src_start, src_end) in enumerate(parts):
+        duration_frames = sec_to_frames(src_end - src_start, seq_fps)
+        if duration_frames <= 0:
+            continue
+        name = label[:60] if n_parts == 1 else f"{label[:54]} ({i + 1}/{n_parts})"
+        clips.append({
+            "track": track,
+            "file_key": file_key,
+            "name": name,
+            "src_start": src_start,
+            "src_end": src_end,
+            "seq_start": cursor + total_added,
+            "seq_end": cursor + total_added + duration_frames,
+            "row": row_idx + 1,
+        })
+        total_added += duration_frames
+    return total_added
+
+
+def parse_unified_tc_parts(tc_str: str, filename_to_key: dict) -> list[tuple]:
+    """Парсит таймкод реплики, возможно составной через разделитель " || ".
+
+    Каждая часть — стандартный таймкод, принимаемый parse_unified_tc.
+    Возвращает список (file_key, start_sec, end_sec). Пустой список если
+    хотя бы одна часть не парсится.
+    """
+    if not tc_str or not tc_str.strip():
+        return []
+    segments = [s.strip() for s in tc_str.split("||") if s.strip()]
+    parts: list[tuple] = []
+    for seg in segments:
+        one = parse_unified_tc(seg, filename_to_key)
+        if one is None:
+            print(f"  WARN: не парсится часть таймкода: {seg}")
+            return []
+        parts.append(one)
+    return parts
+
+
 def parse_unified_tc(tc_str: str, filename_to_key: dict):
     """Парсит таймкод реплики в двух форматах:
     - 'filename.ext, MM:SS.ss -> MM:SS.ss'  (старый)
@@ -731,44 +782,26 @@ def main():
 
         # Реплика Славы
         if slava_text and slava_tc:
-            parsed = parse_unified_tc(slava_tc, filename_to_key)
-            if parsed:
-                file_key, src_start, src_end = parsed
-                duration_frames = sec_to_frames(src_end - src_start, seq_fps)
-                if duration_frames > 0:
-                    clips.append({
-                        "track": "slava",
-                        "file_key": file_key,
-                        "name": slava_text[:60],
-                        "src_start": src_start,
-                        "src_end": src_end,
-                        "seq_start": cursor,
-                        "seq_end": cursor + duration_frames,
-                        "row": row_idx + 1,
-                    })
-                    cursor += duration_frames
+            parts = parse_unified_tc_parts(slava_tc, filename_to_key)
+            if parts:
+                added = _append_parts_as_clips(
+                    clips, parts, "slava", slava_text, row_idx, cursor, seq_fps,
+                )
+                cursor += added
+                if added > 0:
                     slava_count += 1
             else:
                 skipped.append((row_idx + 1, f"slava: {slava_tc[:60]}"))
 
         # Реплика героя
         if hero_text and hero_tc:
-            parsed = parse_unified_tc(hero_tc, filename_to_key)
-            if parsed:
-                file_key, src_start, src_end = parsed
-                duration_frames = sec_to_frames(src_end - src_start, seq_fps)
-                if duration_frames > 0:
-                    clips.append({
-                        "track": "hero",
-                        "file_key": file_key,
-                        "name": hero_text[:60],
-                        "src_start": src_start,
-                        "src_end": src_end,
-                        "seq_start": cursor,
-                        "seq_end": cursor + duration_frames,
-                        "row": row_idx + 1,
-                    })
-                    cursor += duration_frames
+            parts = parse_unified_tc_parts(hero_tc, filename_to_key)
+            if parts:
+                added = _append_parts_as_clips(
+                    clips, parts, "hero", hero_text, row_idx, cursor, seq_fps,
+                )
+                cursor += added
+                if added > 0:
                     hero_count += 1
             else:
                 skipped.append((row_idx + 1, f"hero: {hero_tc[:60]}"))
