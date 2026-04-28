@@ -97,16 +97,33 @@ def probe_file(path: Path) -> dict:
 # Сканирование проекта
 # ---------------------------------------------------------------------------
 
+def _pick_media_dir(project_dir: Path, subdir: str) -> Path:
+    """Возвращает cuts/<subdir> если там есть медиафайлы, иначе raw/<subdir>.
+
+    cuts/ — очищенные cut_pauses файлы с теми же именами, что в raw/.
+    Если cuts/<subdir> существует и непуст — приоритет ему.
+    """
+    cuts_dir = project_dir / "cuts" / subdir
+    raw_dir = project_dir / "raw" / subdir
+    if cuts_dir.exists():
+        for f in cuts_dir.iterdir():
+            if f.suffix.lower() in MEDIA_EXTENSIONS:
+                return cuts_dir
+    return raw_dir
+
+
 def scan_project(project_dir: Path) -> tuple[dict, dict, dict]:
-    """Сканирует raw/voiceover/ и raw/interviews/.
+    """Сканирует voiceover/ и interviews/ (приоритет cuts/, fallback raw/).
 
     Возвращает (files_dict, filename_to_key, seq_settings).
     """
     files = {}
     filename_to_key = {}
 
-    voiceover_dir = project_dir / "raw" / "voiceover"
-    interviews_dir = project_dir / "raw" / "interviews"
+    voiceover_dir = _pick_media_dir(project_dir, "voiceover")
+    interviews_dir = _pick_media_dir(project_dir, "interviews")
+    print(f"  Voiceover: {voiceover_dir.relative_to(project_dir)}")
+    print(f"  Interviews: {interviews_dir.relative_to(project_dir)}")
 
     first_interview_info = None
 
