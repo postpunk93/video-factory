@@ -612,9 +612,10 @@ def snap_to_silence(start: float, end: float, silences: list[dict],
                     max_end: float = float("inf")) -> tuple[float, float]:
     """Привязывает start к ближайшему silence_end до него, end — к ближайшему silence_start после.
 
-    min_start / max_end — жёсткие ограничения: snapped_start не меньше min_start,
-    snapped_end не больше max_end. Если в ограниченном окне нет подходящей тишины —
-    fallback на оригинальный start / end (без snap)."""
+    min_start / max_end — фильтры окна поиска тишины: silence_end должен быть ≥ min_start,
+    silence_start должен быть ≤ max_end. Если в окне нет подходящей тишины — fallback
+    на оригинальный start / end (без snap). Вызывающий обязан гарантировать
+    min_start ≤ start и max_end ≥ end, иначе fallback вернёт значение вне ограничения."""
     snapped_start = start
     snapped_end = end
 
