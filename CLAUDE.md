@@ -50,7 +50,7 @@ python _scripts/match_timecodes.py compact <project_dir>    # Генерация
 python _scripts/build_xml.py <project_dir> [--davinci]
 ```
 
-Сканирует `raw/voiceover/` и `raw/interviews/` (видео + аудио форматы), получает метаданные через `ffprobe`, читает `script/script.csv` и генерирует FCP 7 XML в `assembly/`. Выходные файлы: `{name}_rough_cut.xml` (относительные пути) и `{name}_rough_cut_local.xml` (абсолютные). С флагом `--davinci` дополнительно генерирует `{name}_rough_cut.fcpxml` (FCPXML 1.9 для DaVinci Resolve). Требует `ffprobe` на PATH.
+Сканирует `voiceover/` и `interviews/` (видео + аудио форматы), получает метаданные через `ffprobe`, читает `script/script.csv` и генерирует FCP 7 XML в `assembly/`. Для каждого подкаталога приоритет у `cuts/<subdir>/` (если непуст), иначе `raw/<subdir>/`. Так очищенные cut_pauses файлы автоматически подхватываются. Выходные файлы: `{name}_rough_cut.xml` (относительные пути) и `{name}_rough_cut_local.xml` (абсолютные). С флагом `--davinci` дополнительно генерирует `{name}_rough_cut.fcpxml` (FCPXML 1.9 для DaVinci Resolve). Требует `ffprobe` на PATH.
 
 **Формат таймкодов в CSV:** одна реплика может быть составной. Формат части — `file.ext: MM:SS.ss — MM:SS.ss` (двоеточие + em-dash, новый) или `file.ext, MM:SS.ss -> MM:SS.ss` (старый). Составные цитаты склеиваются разделителем ` || `, например:
 
