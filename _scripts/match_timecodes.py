@@ -819,12 +819,32 @@ def cmd_snap(project_dir: Path) -> None:
             continue
 
         snapped_parts: list[tuple[str, float, float]] = []
-        for p in parts:
+        for i, p in enumerate(parts):
             fname = p.get("file")
             if not fname:
                 continue
+
+            # Ближайший предыдущий парт в том же файле (внутри строки)
+            prev = next((q for q in reversed(parts[:i]) if q.get("file") == fname), None)
+            # Ближайший следующий парт в том же файле (внутри строки)
+            nxt = next((q for q in parts[i+1:] if q.get("file") == fname), None)
+
+            min_start = prev["end"] if prev else 0.0
+            max_end = nxt["start"] if nxt else float("inf")
+
+            # Защита от уже пересекающихся word-границ в verified.json
+            if min_start > p["start"]:
+                print(f"  Внимание: строка {row['row_idx']} — word-границы соседних частей пересекаются "
+                      f"(prev.end={min_start} > p.start={p['start']}), снимаем нижнее ограничение")
+                min_start = 0.0
+            if max_end < p["end"]:
+                print(f"  Внимание: строка {row['row_idx']} — word-границы соседних частей пересекаются "
+                      f"(nxt.start={max_end} < p.end={p['end']}), снимаем верхнее ограничение")
+                max_end = float("inf")
+
             silences = silence_cache.get(fname, [])
-            ss, se = snap_to_silence(p["start"], p["end"], silences)
+            ss, se = snap_to_silence(p["start"], p["end"], silences,
+                                     min_start=min_start, max_end=max_end)
             snapped_parts.append((fname, ss, se))
 
         if not snapped_parts:
