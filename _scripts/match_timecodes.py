@@ -13,6 +13,7 @@ import json
 import re
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 
 if sys.platform == "win32":
@@ -103,65 +104,197 @@ def _safe_time(word: dict, field: str, words: list[dict], idx: int) -> float:
 
 # ─── Fuzzy whole-match (LCS) ───────────────────────────────────────────────
 
-def fuzzy_whole_match(phrase: str, transcripts: dict, min_score: float = 0.85) -> dict | None:
-    """LCS по скользящему окну. Возвращает лучший part (dict) или None.
+# Разрыв в matched_b > FALSE_START_GAP считается false-start'ом
+# (спикер начал, ошибся, повторил) и режется на отдельные части.
+FALSE_START_GAP = 5
+# Часть с количеством совпавших слов < FALSE_START_MIN_PART игнорируется как
+# фрагмент false-start'а (например, 2 слова "курьеры тут" перед чистым дублем).
+FALSE_START_MIN_PART = 3
 
-    Возвращаемый part: {file, start, end, score, words_matched, total_words}
-    Score = words_matched / total_words_in_phrase.
+
+def fuzzy_whole_match(phrase: str, transcripts: dict, min_score: float = 0.85) -> list[dict] | None:
+    """LCS по скользящему окну. Возвращает список частей (1+) или None.
+
+    Каждая часть: {file, start, end, score, words_matched, total_words, text}.
+    Обычно одна часть. Если внутри окна обнаружен false-start (разрыв в
+    выравнивании > FALSE_START_GAP слов транскрипта), фраза режется на
+    несколько частей — гарбидж между чистыми попытками выкидывается.
     """
     pwords = normalize(phrase).split()
     if len(pwords) < 3:
         return None
 
-    best = None
+    # Двухпроходный поиск:
+    # Pass 1 — быстрый rolling-LCS только для score, ищем лучшее окно.
+    # Pass 2 — full DP + backtrack только для победителя.
+    # Перед LCS — multiset-prefilter: верхняя оценка LCS = пересечение
+    # bag-of-words фразы и окна. Если меньше порога, LCS заведомо ниже.
+    pcounter = Counter(pwords)
+    min_overlap = int(min_score * len(pwords))
+    best = None  # (score, words, twords, start_idx, filename)
 
     for filename, tdata in transcripts.items():
         words = tdata["words"]
-        # Нормализованные токены берём из кеша, иначе считаем на лету (fallback).
         twords = tdata.get("norm_words") or [normalize(w.get("word", "")) for w in words]
 
         m = len(twords)
         if m == 0:
             continue
 
-        # Окно чуть длиннее фразы: допускаем вставки/замены слов.
-        window_len = int(len(pwords) * 1.3) + 5
+        # Широкое окно нужно чтобы захватить false-start'ы:
+        # спикер мог начать → споткнуться → начать заново. Узкое окно
+        # видит только одну попытку и теряет другую.
+        window_len = int(len(pwords) * 2.5) + 5
         for start_idx in range(0, max(1, m - window_len + 1)):
             end_idx = min(m, start_idx + window_len)
             window = twords[start_idx:end_idx]
 
+            wcounter = Counter(window)
+            overlap = sum(min(pcounter[w], wcounter[w]) for w in pcounter)
+            if overlap < min_overlap:
+                continue
+
             lcs_len = _lcs_length(pwords, window)
             score = lcs_len / len(pwords)
 
-            if score >= min_score and (best is None or score > best["score"]):
-                start_t = _safe_time(words[start_idx], "start", words, start_idx)
-                end_t = _safe_time(words[end_idx - 1], "end", words, end_idx - 1)
-                best = {
-                    "file": filename,
-                    "start": round(start_t, 2),
-                    "end": round(end_t, 2),
-                    "score": round(score, 3),
-                    "words_matched": lcs_len,
-                    "total_words": len(pwords),
-                }
-    return best
+            if score >= min_score and (best is None or score > best[0]):
+                best = (score, words, twords, start_idx, filename)
+
+    if best is None:
+        return None
+
+    score, words, twords, start_idx, filename = best
+    window_len = int(len(pwords) * 2.5) + 5
+    end_idx = min(len(twords), start_idx + window_len)
+    _, matched_pairs = _lcs_align(pwords, twords[start_idx:end_idx])
+    parts_split = _split_false_starts(matched_pairs, FALSE_START_GAP, FALSE_START_MIN_PART)
+    parts_split = _drop_redundant_parts(parts_split)
+    if not parts_split:
+        return None
+
+    result = []
+    for p in parts_split:
+        first_widx = start_idx + p["b_first"]
+        last_widx = start_idx + p["b_last"]
+        start_t = _safe_time(words[first_widx], "start", words, first_widx)
+        end_t = _safe_time(words[last_widx], "end", words, last_widx)
+        part_text = " ".join(pwords[p["a_first"]:p["a_last"] + 1])
+        result.append({
+            "file": filename,
+            "start": round(start_t, 2),
+            "end": round(end_t, 2),
+            "score": round(score, 3),
+            "words_matched": p["count"],
+            "total_words": len(pwords),
+            "text": part_text,
+        })
+    return result
 
 
 def _lcs_length(a: list[str], b: list[str]) -> int:
-    """Длина LCS двух списков слов."""
+    """Только длина LCS (rolling DP). Без восстановления выравнивания.
+
+    Используется в pass 1 fuzzy_whole_match — быстрее чем _lcs_align,
+    т.к. не аллоцирует полную таблицу.
+    """
     n, m = len(a), len(b)
     if n == 0 or m == 0:
         return 0
     prev = [0] * (m + 1)
     for i in range(1, n + 1):
         cur = [0] * (m + 1)
+        ai = a[i - 1]
         for j in range(1, m + 1):
-            if a[i - 1] == b[j - 1]:
+            if ai == b[j - 1]:
                 cur[j] = prev[j - 1] + 1
             else:
                 cur[j] = max(prev[j], cur[j - 1])
         prev = cur
     return prev[m]
+
+
+def _lcs_align(a: list[str], b: list[str]) -> tuple[int, list[tuple[int, int]]]:
+    """LCS с восстановлением выравнивания.
+
+    Возвращает (длина_LCS, пары_(a_idx,_b_idx)_совпавших_слов).
+    Пары отсортированы по возрастанию b_idx.
+    """
+    n, m = len(a), len(b)
+    if n == 0 or m == 0:
+        return 0, []
+    dp = [[0] * (m + 1) for _ in range(n + 1)]
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            if a[i - 1] == b[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1] + 1
+            else:
+                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
+    matched = []
+    i, j = n, m
+    while i > 0 and j > 0:
+        if a[i - 1] == b[j - 1]:
+            matched.append((i - 1, j - 1))
+            i -= 1
+            j -= 1
+        elif dp[i - 1][j] >= dp[i][j - 1]:
+            i -= 1
+        else:
+            j -= 1
+    matched.reverse()
+    return dp[n][m], matched
+
+
+def _split_false_starts(matched_pairs: list[tuple[int, int]],
+                        gap_threshold: int,
+                        min_part_words: int) -> list[dict]:
+    """Режет matched_pairs на части по разрывам в b > gap_threshold.
+
+    Возвращает список dict-ов: {a_first, a_last, b_first, b_last, count}.
+    Части с count < min_part_words отбрасываются (шум).
+    """
+    if not matched_pairs:
+        return []
+    groups = [[matched_pairs[0]]]
+    for ai, bi in matched_pairs[1:]:
+        prev_bi = groups[-1][-1][1]
+        if bi - prev_bi > gap_threshold:
+            groups.append([(ai, bi)])
+        else:
+            groups[-1].append((ai, bi))
+
+    result = []
+    for g in groups:
+        if len(g) < min_part_words:
+            continue
+        result.append({
+            "a_first": g[0][0],
+            "a_last": g[-1][0],
+            "b_first": g[0][1],
+            "b_last": g[-1][1],
+            "count": len(g),
+        })
+    return result
+
+
+def _drop_redundant_parts(parts: list[dict]) -> list[dict]:
+    """Дропает части, чей a-диапазон (слова фразы) полностью покрыт другой частью.
+
+    Это false-start того же куска: спикер начал, остановился, начал заново
+    с того же места. В таких случаях оставляем самую полную попытку.
+    """
+    if len(parts) < 2:
+        return parts
+    keep = [True] * len(parts)
+    for i, p in enumerate(parts):
+        for j, q in enumerate(parts):
+            if i == j or not keep[j]:
+                continue
+            if (q["a_first"] <= p["a_first"]
+                    and q["a_last"] >= p["a_last"]
+                    and q["count"] > p["count"]):
+                keep[i] = False
+                break
+    return [p for p, k in zip(parts, keep) if k]
 
 
 # ─── Разбиение на предложения и склейка частей ─────────────────────────────
@@ -207,18 +340,23 @@ def find_quote_parts(phrase: str, transcripts: dict) -> dict:
 
     Для whole-match `parts` содержит один элемент со списком candidates длины 1.
     Для split-match каждый part имеет только свои candidates.
+    Если внутри whole-match найден false-start — возвращаются несколько parts
+    (между чистыми попытками вырезается гарбидж), mode остаётся "whole".
     """
-    whole = fuzzy_whole_match(phrase, transcripts)
-    if whole is not None:
+    whole_parts = fuzzy_whole_match(phrase, transcripts)
+    if whole_parts:
+        # Когда whole вернул одну часть — текст полной фразы.
+        # Когда несколько (false-start split) — у каждой части свой срез слов.
+        single = len(whole_parts) == 1
         return {
             "parts": [{
-                "text": phrase,
+                "text": phrase if single else w["text"],
                 "candidates": [{
-                    "file": whole["file"],
-                    "start": whole["start"],
-                    "end": whole["end"],
+                    "file": w["file"],
+                    "start": w["start"],
+                    "end": w["end"],
                 }],
-            }],
+            } for w in whole_parts],
             "unmatched": [],
             "mode": "whole",
         }
