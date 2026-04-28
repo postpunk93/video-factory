@@ -42,21 +42,33 @@ def snap_to_silence(start, end, silences, window=2.0,
 
 ### Изменения в `cmd_snap`
 
-Перед snap каждой части считаем соседей в той же строке и том же файле:
+Перед snap каждой части считаем **исходно-хронологических** соседей в той же строке и том же файле — то есть не «соседних по скриптовому порядку», а по позиции в исходнике:
 
 ```
 parts = row["chosen_parts"]
 for i, p in enumerate(parts):
     fname = p["file"]
-    # ближайший предыдущий парт в том же файле
-    prev = next((q for q in parts[i-1::-1] if q["file"] == fname), None)
-    # ближайший следующий парт в том же файле
-    nxt = next((q for q in parts[i+1:] if q["file"] == fname), None)
+    # Ближайший предыдущий парт по позиции в источнике (end ≤ p.start)
+    prev_candidates = [q for q in parts if q is not p
+                       and q.get("file") == fname
+                       and q["end"] <= p["start"]]
+    prev = max(prev_candidates, key=lambda q: q["end"]) if prev_candidates else None
+
+    # Ближайший следующий парт по позиции в источнике (start ≥ p.end)
+    nxt_candidates = [q for q in parts if q is not p
+                      and q.get("file") == fname
+                      and q["start"] >= p["end"]]
+    nxt = min(nxt_candidates, key=lambda q: q["start"]) if nxt_candidates else None
+
     min_start = prev["end"] if prev else 0.0
     max_end = nxt["start"] if nxt else float("inf")
     ss, se = snap_to_silence(p["start"], p["end"], silences,
                              min_start=min_start, max_end=max_end)
 ```
+
+Зачем хронологически, а не по скриптовому порядку: одна и та же CSV-реплика может цитировать разные минуты одного файла в нелинейном порядке (агент собирает фразу из кусков). Скриптовый сосед в этом случае не является источниковым соседом и не должен ограничивать snap. Источниковый поиск автоматически:
+- Игнорирует «соседей» в других позициях файла (нелинейный порядок).
+- Игнорирует пересекающиеся парты как соседей (если `q.start ≤ p.start ≤ q.end`, то `q` не попадёт ни в `prev_candidates`, ни в `nxt_candidates`).
 
 Соседи — только в том же файле. Между файлами в одной строке ограничений нет.
 
@@ -68,12 +80,13 @@ for i, p in enumerate(parts):
 
 ## Edge cases
 
-**Word-границы соседей уже пересекаются** (бага search/verify):
-`prev.end > p.start` или `nxt.start < p.end`. Снимаем ограничение для этой пары (treat as no neighbor) и пишем warning. Snap работает как раньше; пользователь чинит верификацию.
-
 **Парт в файле один в строке** (соседей в том же файле нет): `min_start=0.0`, `max_end=∞` — поведение идентично текущему.
 
 **Парты в разных файлах** в строке (разнобой между источниками): соседями не считаются, ограничений нет.
+
+**Парты в одном файле, нелинейный скриптовый порядок** (например, реплика собрана из минут 41 → 06 другого файла → 38 первого): источниковый поиск находит правильных соседей и применяет правильные ограничения. Скриптовый порядок игнорируется.
+
+**Word-границы соседей пересекаются в источнике** (`q.start < p.end` и `q.end > p.start`): такие парты не попадают ни в `prev_candidates`, ни в `nxt_candidates` для `p`, потому что для `prev` нужно `q.end ≤ p.start`, для `nxt` — `q.start ≥ p.end`. Соседом не считаются, ограничений нет — snap пропускает оверлап как есть. Чинить такие случаи — отдельная задача (см. memory `project_verified_json_overlap_fix.md`); нужен другой механизм (например, разрез в midpoint), не покрывается текущим дизайном.
 
 ## Тестирование
 
