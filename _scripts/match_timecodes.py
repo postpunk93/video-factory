@@ -328,6 +328,56 @@ def merge_adjacent_parts(parts: list[dict], max_gap: float = 3.0) -> list[dict]:
     return merged
 
 
+def _dedupe_split_overlaps(parts: list[dict], transcripts: dict) -> None:
+    """Подрезает word-индексы соседних split-кандидатов в одном файле,
+    если их ренжи в транскрипте пересекаются. Меняет parts in-place.
+
+    Для каждой пары соседних script-частей, для каждой пары их кандидатов
+    в одном файле где cand_a.words_end >= cand_b.words_start и cand_b
+    лежит позже в источнике (cb.words_start >= ca.words_start) — клипит
+    обе по середине пересечения. Граничное слово при 1-word оверлапе
+    выкидывается из обоих ренжей.
+
+    Whole-mode (fuzzy_whole_match) не трогается — там ренжи не пересекаются
+    по построению.
+    """
+    for i in range(len(parts) - 1):
+        for ca in parts[i].get("candidates", []):
+            if "words_start" not in ca or "words_end" not in ca:
+                continue
+            for cb in parts[i + 1].get("candidates", []):
+                if "words_start" not in cb or "words_end" not in cb:
+                    continue
+                if ca["file"] != cb["file"]:
+                    continue
+                # Нет пересечения по word-индексам
+                if ca["words_end"] < cb["words_start"]:
+                    continue
+                # Out-of-order: cb лежит в источнике раньше ca — не наш кейс
+                if cb["words_start"] < ca["words_start"]:
+                    continue
+
+                mid = (cb["words_start"] + ca["words_end"]) // 2
+                new_a_end = mid - 1
+                new_b_start = mid + 1
+
+                # Защита от схлопывания
+                if new_a_end < ca["words_start"]:
+                    continue
+                if new_b_start > cb["words_end"]:
+                    continue
+
+                # Монотонные клипы (для случая множественных пересечений)
+                if new_a_end < ca["words_end"]:
+                    ca["words_end"] = new_a_end
+                    words = transcripts[ca["file"]]["words"]
+                    ca["end"] = round(_safe_time(words[new_a_end], "end", words, new_a_end), 2)
+                if new_b_start > cb["words_start"]:
+                    cb["words_start"] = new_b_start
+                    words = transcripts[cb["file"]]["words"]
+                    cb["start"] = round(_safe_time(words[new_b_start], "start", words, new_b_start), 2)
+
+
 def find_quote_parts(phrase: str, transcripts: dict) -> dict:
     """Главная функция поиска. Возвращает словарь с ключами parts/unmatched/mode.
 
