@@ -82,6 +82,10 @@ def _safe_time(word: dict, field: str, words: list[dict], idx: int) -> float:
 
     Для end: ограничивает длительность слова MAX_WORD_DURATION
     (артефакт Whisper — end последнего слова сегмента часто растянут на тишину).
+
+    Fallback из противоположного поля соседа: end → start следующего (верхняя
+    граница), start → end предыдущего (нижняя граница). Whisperx-слова не
+    пересекаются по времени, поэтому это безопасные конструктивные оценки.
     """
     val = word.get(field, 0.0)
     if val and val > 0.0:
@@ -91,12 +95,13 @@ def _safe_time(word: dict, field: str, words: list[dict], idx: int) -> float:
             if word_start > 0 and val - word_start > MAX_WORD_DURATION:
                 return round(word_start + MAX_WORD_DURATION, 2)
         return val
-    # Ищем ближайшего соседа с валидным значением
+    # Fallback: противоположное поле соседа как safe bound
+    fallback_field = "start" if field == "end" else "end"
     direction = -1 if field == "start" else 1
     for offset in range(1, 20):
         ni = idx + direction * offset
         if 0 <= ni < len(words):
-            nval = words[ni].get(field, 0.0)
+            nval = words[ni].get(fallback_field, 0.0)
             if nval and nval > 0.0:
                 return nval
     return 0.0
