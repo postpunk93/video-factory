@@ -438,10 +438,16 @@ def find_quote_parts(phrase: str, transcripts: dict) -> dict:
         parts_out.append({
             "text": s,
             "candidates": [
-                {"file": c["file"], "start": c["start"], "end": c["end"]}
+                {"file": c["file"], "start": c["start"], "end": c["end"],
+                 "words_start": c["words_start"], "words_end": c["words_end"]}
                 for c in cands
             ],
         })
+
+    # Дедуп оверлапов word-границ соседних split-кандидатов в одном файле.
+    # Должно идти ДО merge_adjacent_parts: если merge склеит две части в одну,
+    # оверлапа всё равно нет; если не склеит — клипа уже хватит.
+    _dedupe_split_overlaps(parts_out, transcripts)
 
     # Мёрдж соседних: только для частей с единственным кандидатом.
     single_cand_parts = [
