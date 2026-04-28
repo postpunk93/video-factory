@@ -607,14 +607,22 @@ def detect_silences(video_path: Path) -> list[dict]:
 
 
 def snap_to_silence(start: float, end: float, silences: list[dict],
-                    window: float = 2.0) -> tuple[float, float]:
-    """Привязывает start к ближайшему silence_end до него, end — к ближайшему silence_start после."""
+                    window: float = 2.0,
+                    min_start: float = 0.0,
+                    max_end: float = float("inf")) -> tuple[float, float]:
+    """Привязывает start к ближайшему silence_end до него, end — к ближайшему silence_start после.
+
+    min_start / max_end — жёсткие ограничения: snapped_start не меньше min_start,
+    snapped_end не больше max_end. Если в ограниченном окне нет подходящей тишины —
+    fallback на оригинальный start / end (без snap)."""
     snapped_start = start
     snapped_end = end
 
     best_dist_start = window
     for s in silences:
-        # silence_end до start (±0.1s допуск на перекрытие)
+        # silence_end до start (±0.1s допуск на перекрытие), не раньше min_start
+        if s["end"] < min_start:
+            continue
         dist = max(0, start - s["end"])
         if s["end"] <= start + 0.1 and dist < best_dist_start:
             best_dist_start = dist
@@ -622,7 +630,9 @@ def snap_to_silence(start: float, end: float, silences: list[dict],
 
     best_dist_end = window
     for s in silences:
-        # silence_start после end (±0.1s допуск на перекрытие)
+        # silence_start после end (±0.1s допуск на перекрытие), не позже max_end
+        if s["start"] > max_end:
+            continue
         dist = max(0, s["start"] - end)
         if s["start"] >= end - 0.1 and dist < best_dist_end:
             best_dist_end = dist
