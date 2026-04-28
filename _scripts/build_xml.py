@@ -569,7 +569,7 @@ def _frame_duration(timebase: int, ntsc: bool) -> str:
     return f"1/{timebase}s"
 
 
-def build_fcpxml(clips, files, seq_settings, seq_name):
+def build_fcpxml(clips, files, seq_settings, seq_name, relative=True):
     """Собирает FCPXML 1.9 из списка клипов (для DaVinci Resolve / FCP X)."""
     seq_tb = seq_settings["timebase"]
     seq_ntsc = seq_settings["ntsc"]
@@ -595,7 +595,7 @@ def build_fcpxml(clips, files, seq_settings, seq_name):
         asset_ids[file_key] = aid
 
         has_video = "1" if info["width"] > 0 else "0"
-        src_url = info["path"].name
+        src_url = info["path"].name if relative else path_to_fcpxml_url(info["path"])
         dur = _sec_to_rational(info["duration_sec"], seq_tb, seq_ntsc)
 
         asset_attrs = {
@@ -855,14 +855,17 @@ def main():
 
     # FCPXML для DaVinci Resolve
     if args.davinci:
-        fcpxml = build_fcpxml(clips, files, seq_settings, seq_name)
-        xml_str = xml_to_string(fcpxml, doctype="fcpxml")
+        for relative, suffix in [(False, "_local"), (True, "")]:
+            fcpxml = build_fcpxml(clips, files, seq_settings, seq_name, relative=relative)
+            xml_str = xml_to_string(fcpxml, doctype="fcpxml")
 
-        out_path = assembly_dir / f"{project_name}_rough_cut.fcpxml"
-        with open(out_path, "w", encoding="utf-8") as f:
-            f.write(xml_str)
+            out_path = assembly_dir / f"{project_name}_rough_cut{suffix}.fcpxml"
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(xml_str)
 
-        print(f"Сохранено (FCPXML / DaVinci Resolve): {out_path}")
+            label = ("абсолютные пути (локальный)" if suffix == "_local"
+                     else "относительные пути (для zip)")
+            print(f"Сохранено (FCPXML / DaVinci, {label}): {out_path}")
 
 
 if __name__ == "__main__":
