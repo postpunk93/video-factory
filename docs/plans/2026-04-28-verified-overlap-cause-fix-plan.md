@@ -405,6 +405,109 @@ git commit -m "fix(match_timecodes): подключить _dedupe_split_overlaps
 
 ---
 
+## Task 3.5: Фикс `_safe_time` (второй корень, обнаружен Task 4 регрессией)
+
+**Files:**
+- Modify: `_scripts/match_timecodes.py:80-102` (функция `_safe_time`)
+
+**Контекст:** Task 4 регрессия показала что `_dedupe_split_overlaps` чинит 5 из 6 кейсов в `candidates.json` термосумок. Row 81 остаётся с оверлапом 0.16с — другая причина: `_safe_time` при fallback берёт **то же** поле у соседа (`end` для `end`-lookup), что семантически некорректно. Должно брать **противоположное** поле (`start` следующего слова как верхняя граница для `end[K]`). Подробности: `docs/plans/2026-04-28-verified-overlap-cause-fix-design.md` секция «Дополнение».
+
+**Step 1: Расширить smoke-тест двумя кейсами**
+
+Добавить в существующий тест из Task 2 (или временный smoke-тест) два новых кейса:
+
+```python
+# Кейс 7: _safe_time для end слова с пустым таймом — должен брать start следующего слова
+import sys; sys.path.insert(0, '_scripts')
+from match_timecodes import _safe_time
+
+words7 = [
+    {"start": 1.0, "end": 1.5, "word": "ok1"},
+    {"start": 0.0, "end": 0.0, "word": "empty"},  # idx=1 — пустое
+    {"start": 2.5, "end": 3.0, "word": "ok2"},
+]
+assert _safe_time(words7[1], "end", words7, 1) == 2.5, "E7: end fallback должен брать start следующего"
+assert _safe_time(words7[1], "start", words7, 1) == 1.5, "E7: start fallback должен брать end предыдущего"
+print("Кейс 7 (_safe_time fallback из противоположного поля) ✓")
+
+# Кейс 8: цепочка пустых слов — fallback идёт дальше
+words8 = [
+    {"start": 1.0, "end": 1.5, "word": "ok1"},
+    {"start": 0.0, "end": 0.0, "word": "empty1"},
+    {"start": 0.0, "end": 0.0, "word": "empty2"},
+    {"start": 3.0, "end": 3.5, "word": "ok2"},
+]
+assert _safe_time(words8[1], "end", words8, 1) == 3.0, "E8: цепочка пустых — end берёт start ok2"
+assert _safe_time(words8[2], "start", words8, 2) == 1.5, "E8: цепочка пустых — start берёт end ok1"
+print("Кейс 8 (цепочка пустых слов) ✓")
+```
+
+**Step 2: Запустить — должен упасть на assertion**
+
+```bash
+python C:/Users/Alex/Videos/factory/.tmp_smoke_safe_time.py
+```
+
+Ожидаемое: первый assert E7 падает (текущий `_safe_time` для end fallback возвращает `words[2].end = 3.0`, а ожидаем 2.5).
+
+**Step 3: Реализовать фикс `_safe_time`**
+
+Заменить функцию (`_scripts/match_timecodes.py:80-102`) на:
+
+```python
+def _safe_time(word: dict, field: str, words: list[dict], idx: int) -> float:
+    """Берёт start/end из слова; если 0.0 — ищет у соседей.
+
+    Для end: ограничивает длительность слова MAX_WORD_DURATION
+    (артефакт Whisper — end последнего слова сегмента часто растянут на тишину).
+
+    Fallback из противоположного поля соседа: end → start следующего (верхняя
+    граница), start → end предыдущего (нижняя граница). Whisperx-слова не
+    пересекаются по времени, поэтому это безопасные конструктивные оценки.
+    """
+    val = word.get(field, 0.0)
+    if val and val > 0.0:
+        # Защита от артефактов Whisper: end слишком далеко от start
+        if field == "end":
+            word_start = word.get("start", 0.0)
+            if word_start > 0 and val - word_start > MAX_WORD_DURATION:
+                return round(word_start + MAX_WORD_DURATION, 2)
+        return val
+    # Fallback: противоположное поле соседа как safe bound
+    fallback_field = "start" if field == "end" else "end"
+    direction = -1 if field == "start" else 1
+    for offset in range(1, 20):
+        ni = idx + direction * offset
+        if 0 <= ni < len(words):
+            nval = words[ni].get(fallback_field, 0.0)
+            if nval and nval > 0.0:
+                return nval
+    return 0.0
+```
+
+Изменение: одна строка `fallback_field = ...` и подмена `field` на `fallback_field` внутри цикла.
+
+**Step 4: Запустить smoke-тест — должен пройти**
+
+```bash
+python C:/Users/Alex/Videos/factory/.tmp_smoke_safe_time.py
+```
+
+Ожидаемое: оба кейса 7 и 8 выводят ✓.
+
+**Step 5: Прогнать также старый smoke-тест из Task 2 — все 6 кейсов должны пройти**
+
+Кейсы 1-6 не затрагивают пустые таймы, не должны измениться.
+
+**Step 6: Commit**
+
+```bash
+git add _scripts/match_timecodes.py
+git commit -m "fix(match_timecodes): _safe_time fallback из противоположного поля соседа"
+```
+
+---
+
 ## Task 4: Регрессия на термосумках
 
 **Files:**
@@ -550,10 +653,7 @@ print('done')
 
 **Step 7: Commit изменений в проекте**
 
-```bash
-git add projects/2026-03-thermobags/script/candidates.json projects/2026-03-thermobags/script/verified.json projects/2026-03-thermobags/script/script.csv
-git commit -m "chore(thermobags): пересобрать candidates/verified/script после фикса корня оверлапов"
-```
+⚠ `projects/` в `.gitignore` — артефакты не трекаются. Шаг **пропускается**: пере-сгенерированные `candidates.json`, `verified.json`, `script.csv` остаются локально. Если в будущем потребуется фиксировать конкретное состояние — отдельная задача про снятие/выборочное вкладывание из ignore.
 
 ---
 

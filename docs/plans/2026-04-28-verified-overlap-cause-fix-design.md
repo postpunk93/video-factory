@@ -108,6 +108,80 @@ cb["start"] = round(words[cb["words_start"]].start, 2)
 
 ## Затронутые файлы
 
-- `_scripts/match_timecodes.py` — `find_quote_parts` (проброс word-индексов + вызов `_dedupe_split_overlaps`), новая функция `_dedupe_split_overlaps`. CLI и контракт `candidates.json` остаются совместимыми (поля только добавляются).
+- `_scripts/match_timecodes.py` — `find_quote_parts` (проброс word-индексов + вызов `_dedupe_split_overlaps`), новая функция `_dedupe_split_overlaps`, фикс `_safe_time` (см. ниже). CLI и контракт `candidates.json` остаются совместимыми (поля только добавляются).
 
 CLAUDE.md и docstring менять не нужно — внешний интерфейс не меняется.
+
+---
+
+## Дополнение (2026-04-29): второй корень в `_safe_time`
+
+### Что обнаружено
+
+Регрессия Task 4 на термосумках показала, что `_dedupe_split_overlaps` чинит 5 из 6 кейсов. Row 81 остаётся с оверлапом 0.16с, причина — глубже:
+
+- Слова 1003 ("Burger") и 1004 ("King.") в whisperx-транскрипте имеют `start=0, end=0` (тайм не выставлен)
+- Cand A (предложение S1) кончается на word_end=1004; cand B (S2) начинается на word_start=1005
+- **Word-индексы НЕ пересекаются** (1004 < 1005) — `_dedupe_split_overlaps` корректно пропускает пару
+- Но `_safe_time(words[1004], "end", ...)` падает в fallback (val=0): идёт вперёд, находит `words[1005].end = 675.27` (валидный) → возвращает его
+- Симметрично, `_safe_time(words[1005], "start", ...)` возвращает `words[1005].start = 675.11`
+- Результат: cand A.end = 675.27 и cand B.start = 675.11 — оба тайма пришли из соседа cand B's first word, времена пересеклись
+
+### Корневая причина
+
+`_safe_time` (`_scripts/match_timecodes.py:80-102`) при fallback ищет соседа с **тем же** полем (`end` для `end`-lookup, `start` для `start`-lookup):
+
+```python
+direction = -1 if field == "start" else 1
+for offset in range(1, 20):
+    ni = idx + direction * offset
+    if 0 <= ni < len(words):
+        nval = words[ni].get(field, 0.0)  # ← то же поле
+        if nval and nval > 0.0:
+            return nval
+```
+
+Это семантически некорректно. `end[K]` — конец слова K, а `end[K+1]` — конец другого слова. Использовать `end[K+1]` как замену для `end[K]` означает приписать слову K длительность другого слова, перешагнув через всё, что между ними.
+
+Whisperx-слова **не пересекаются по времени** (мы это проверили на baseline). Поэтому для слова K без валидного `end`:
+- Истинный `end[K]` лежит между `words[K].start` (если валидный) и `words[K+1].start` (старт следующего слова)
+- Использовать `words[K+1].start` как fallback для `end[K]` — корректная верхняя граница
+
+Симметрично для `start`: использовать `end` предыдущего слова как нижнюю границу.
+
+### Решение
+
+В `_safe_time` при fallback искать **противоположное** поле:
+
+```python
+fallback_field = "start" if field == "end" else "end"
+direction = -1 if field == "start" else 1
+for offset in range(1, 20):
+    ni = idx + direction * offset
+    if 0 <= ni < len(words):
+        nval = words[ni].get(fallback_field, 0.0)
+        if nval and nval > 0.0:
+            return nval
+return 0.0
+```
+
+Это конструктивно: `end[K]` ≤ `start[K+1]`, поэтому возврат `start[K+1]` — безопасная (немного консервативная) оценка для `end[K]`. Симметрично для `start`.
+
+### Edge cases
+
+**E7. Цепочка пустых слов на границе.** Если слова K, K+1, K+2 все имеют пустые таймы, fallback пройдёт до K+3 (или дальше) и возьмёт его `start`. Это всё равно валидная верхняя граница для `end[K]`, просто свободнее.
+
+**E8. Полностью пустой транскрипт хвост.** Если до конца `words[]` нет валидного `start`, возвращаем 0.0 (как сейчас). Дальше — ответственность вызывающего кода.
+
+**E9. Все остальные call sites `_safe_time`.** Используется в `fuzzy_whole_match` и `find_candidates` — фикс там даёт более точные таймы, не вносит регрессии (раньше возвращалось «неправильное», теперь — «правильное и более тесное»).
+
+### Тестирование
+
+Smoke-тест добавляется в существующий `_dedupe_split_overlaps`-test (case E7, E8): синтетический `words[]` с пустым словом на границе, проверка что `_safe_time` возвращает корректную верхнюю/нижнюю границу.
+
+Регрессия на термосумках — после фикса оверлапов в `candidates.json` должно быть **0** (было 6 до фикса, 1 после `_dedupe_split_overlaps` без фикса `_safe_time`).
+
+### Что НЕ делаем
+
+- Не меняем `MAX_WORD_DURATION` логику и не трогаем валидный-`end`-too-far-from-`start` clamp (lines 89-92) — это отдельный артефакт whisper, корректно обработан.
+- Не убираем лимит 20 шагов поиска соседа — нет причин.
