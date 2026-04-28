@@ -819,28 +819,30 @@ def cmd_snap(project_dir: Path) -> None:
             continue
 
         snapped_parts: list[tuple[str, float, float]] = []
-        for i, p in enumerate(parts):
+        for p in parts:
             fname = p.get("file")
             if not fname:
                 continue
 
-            # Ближайший предыдущий парт в том же файле (внутри строки)
-            prev = next((q for q in reversed(parts[:i]) if q.get("file") == fname), None)
-            # Ближайший следующий парт в том же файле (внутри строки)
-            nxt = next((q for q in parts[i+1:] if q.get("file") == fname), None)
+            # Источниковые соседи в том же файле (по позиции в исходнике, не по скриптовому порядку):
+            # prev — парт с end ≤ p.start, у которого end максимальный (ближайший до);
+            # nxt  — парт с start ≥ p.end, у которого start минимальный (ближайший после).
+            # Парты, пересекающиеся с p по word-границам, не попадают ни туда, ни туда —
+            # они для snap не соседи и ограничений не дают.
+            prev_candidates = [q for q in parts
+                               if q is not p
+                               and q.get("file") == fname
+                               and q["end"] <= p["start"]]
+            prev = max(prev_candidates, key=lambda q: q["end"]) if prev_candidates else None
+
+            nxt_candidates = [q for q in parts
+                              if q is not p
+                              and q.get("file") == fname
+                              and q["start"] >= p["end"]]
+            nxt = min(nxt_candidates, key=lambda q: q["start"]) if nxt_candidates else None
 
             min_start = prev["end"] if prev else 0.0
             max_end = nxt["start"] if nxt else float("inf")
-
-            # Защита от уже пересекающихся word-границ в verified.json
-            if min_start > p["start"]:
-                print(f"  Внимание: строка {row['row_idx']} — word-границы соседних частей пересекаются "
-                      f"(prev.end={min_start} > p.start={p['start']}), снимаем нижнее ограничение")
-                min_start = 0.0
-            if max_end < p["end"]:
-                print(f"  Внимание: строка {row['row_idx']} — word-границы соседних частей пересекаются "
-                      f"(nxt.start={max_end} < p.end={p['end']}), снимаем верхнее ограничение")
-                max_end = float("inf")
 
             silences = silence_cache.get(fname, [])
             ss, se = snap_to_silence(p["start"], p["end"], silences,
