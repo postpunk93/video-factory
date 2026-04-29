@@ -109,13 +109,30 @@ HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 - `assemble.command` — фаза 3: snap + build_xml.
 - `update.command` — синхронизация с git.
 - `_scripts/*.py` — копии скриптов из основного `factory`.
-- `.claude/skills/match-timecodes/` — скилл для агентной верификации.
+- `.claude/commands/match-timecodes.md` — команда для Claude Code (агентная верификация таймкодов).
 
-Структура папок проекта создаётся прямым запросом в Claude Code («создай структуру для проекта 2026-05-...»), отдельный скилл не нужен.
+## Структура нового проекта
 
-**Что НЕ лежит:** ничего из основного `factory`, кроме копий выше. Никаких черновиков, экспериментов, других проектов.
+Когда сотрудник просит «создай структуру для нового проекта 2026-05-...», создаётся:
 
-При обновлении скриптов в основном `factory` синхронизируй сюда вручную (см. дизайн `factory/docs/plans/2026-04-29-employee-pipeline-design.md`, открытый вопрос 3).
+```
+projects/<имя>/
+  raw/
+    voiceover/    ← начитка Славы (видеофайлы .mp4/.mov/.mkv/.avi)
+    interviews/   ← записи героя (видеофайлы)
+  script/
+    script.csv    ← пустой шаблон с заголовками
+```
+
+Формат `script.csv`: 4 колонки `Слава`, `Слава timecode`, `Герой`, `Герой timecode`. Сотрудник заполняет реплики в `Слава` и `Герой` (одна реплика на строку, в той же row). Колонки таймкодов оставлять пустыми — заполняются автоматически фазой `assemble.command`. Пустой шаблон:
+
+```csv
+Слава,Слава timecode,Герой,Герой timecode
+```
+
+**Что НЕ лежит:** ничего из основного `factory`, кроме копий выше.
+
+При обновлении скриптов в основном `factory` синхронизируй сюда вручную (см. дизайн `factory/docs/plans/2026-04-29-employee-pipeline-design.md` — внутренний design doc, у сотрудника его нет).
 ```
 
 **Step 6: Initial commit**
@@ -268,6 +285,7 @@ log_step "Проверка платформы"
 if [ "$(uname -m)" != "arm64" ]; then
     echo "ОШИБКА: этот инструмент только для Mac Apple Silicon (M1/M2/M3)."
     echo "Текущая архитектура: $(uname -m)"
+    read -p "Нажми Enter чтобы закрыть..." _
     exit 1
 fi
 echo "✓ Apple Silicon"
@@ -300,6 +318,7 @@ if [ "$BREW_PREFIX" != "/opt/homebrew" ]; then
     echo "Удали x86 Homebrew:"
     echo "  /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh)\""
     echo "Затем перезапусти setup.command — он поставит arm64-версию автоматически."
+    read -p "Нажми Enter чтобы закрыть..." _
     exit 1
 fi
 echo "✓ Homebrew по $BREW_PREFIX (arm64)"
@@ -386,6 +405,7 @@ if [ ! -f ".env" ]; then
     echo "  8. Перезапусти setup.command"
     echo ""
     echo "Полная инструкция: docs/setup/hf_token/README.md"
+    read -p "Нажми Enter чтобы закрыть..." _
     exit 1
 fi
 
@@ -396,6 +416,7 @@ set +a
 
 if [ -z "$HF_TOKEN" ] || [ "$HF_TOKEN" = "hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" ]; then
     echo "ОШИБКА: HF_TOKEN не установлен в .env. См. инструкцию выше."
+    read -p "Нажми Enter чтобы закрыть..." _
     exit 1
 fi
 
@@ -447,6 +468,8 @@ echo "     /login    (авторизация в Anthropic)"
 echo ""
 echo "  2. См. QUICKSTART.md для шагов на каждый новый проект."
 echo ""
+
+read -p "Нажми Enter чтобы закрыть..." _
 ```
 
 **Step 2: Сделать исполняемым**
@@ -705,14 +728,16 @@ log_step() {
 
 # --- 5. Проверка обновлений (тихая) ---
 
-# TODO: remote URL guard — Task 13. До этого fetch может молча падать без origin.
-if git fetch origin --quiet 2>/dev/null; then
-    BEHIND=$(git rev-list --count HEAD..origin/main 2>/dev/null || echo "0")
-    if [ "$BEHIND" -gt 0 ]; then
-        echo ""
-        echo "⚠  Доступно обновление инструмента ($BEHIND новых коммитов)."
-        echo "   Запусти update.command когда сможешь (1 минута)."
-        echo ""
+# Только если origin настроен (после Task 13 push). До этого — пропускаем тихо.
+if git remote get-url origin >/dev/null 2>&1; then
+    if git fetch origin --quiet 2>/dev/null; then
+        BEHIND=$(git rev-list --count HEAD..origin/main 2>/dev/null || echo "0")
+        if [ "$BEHIND" -gt 0 ]; then
+            echo ""
+            echo "⚠  Доступно обновление инструмента ($BEHIND новых коммитов)."
+            echo "   Запусти update.command когда сможешь (1 минута)."
+            echo ""
+        fi
     fi
 fi
 
