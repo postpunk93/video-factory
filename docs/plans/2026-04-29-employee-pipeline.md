@@ -499,9 +499,22 @@ exec > >(tee -a "$LOG") 2>&1
 
 echo "=== [$(date +%H:%M:%S)] Обновление ==="
 
+# Хук для дружелюбного сообщения при любой неожиданной ошибке.
+# Все ошибки git/pip/npm пойдут через set -e и сюда.
+trap 'echo ""; echo "✗ Ошибка во время обновления. Пришли Алексу файл setup.log."' ERR
+
+# Препроверки: setup должен быть пройден.
+if [ ! -f .venv/bin/activate ]; then
+    echo "ОШИБКА: .venv не найден. Сначала запусти setup.command."
+    exit 1
+fi
+
 OLD_HEAD=$(git rev-parse HEAD)
 git fetch origin
-git pull --rebase origin main
+# --autostash: если у пользователя случайные изменения в working tree
+# (например ручное правки), git временно прячет их в stash, делает rebase,
+# и накатывает обратно. Защита от хард-стопов на dirty working tree.
+git pull --rebase --autostash origin main
 NEW_HEAD=$(git rev-parse HEAD)
 
 if [ "$OLD_HEAD" = "$NEW_HEAD" ]; then
@@ -524,7 +537,9 @@ fi
 
 # Если есть указание новой версии Claude Code (например в файле CLAUDE_CODE_VERSION)
 if [ -f "CLAUDE_CODE_VERSION" ]; then
-    REQUIRED=$(cat CLAUDE_CODE_VERSION)
+    # tr -d убирает любой trailing newline/whitespace из ручно отредактированного файла,
+    # иначе npm install получит мусорный package spec.
+    REQUIRED=$(tr -d '[:space:]' < CLAUDE_CODE_VERSION)
     CURRENT=$(claude --version 2>/dev/null | awk '{print $NF}' || echo "")
     if [ "$REQUIRED" != "$CURRENT" ]; then
         echo "Обновляю Claude Code до $REQUIRED..."
