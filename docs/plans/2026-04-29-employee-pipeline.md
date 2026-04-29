@@ -630,6 +630,11 @@ if [ -z "$PROJECT" ]; then
     fi
     echo ""
     read -p "Выбери номер проекта: " choice
+    if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt "${#PROJECTS[@]}" ]; then
+        echo "ОШИБКА: неверный номер проекта."
+        read -p "Нажми Enter чтобы закрыть..." _
+        exit 1
+    fi
     PROJECT="projects/${PROJECTS[$((choice-1))]}"
 fi
 
@@ -673,8 +678,25 @@ set -a
 . ./.env
 set +a
 
-# Логирование
+# Логирование (после $LOG разрешён, чтобы trap мог на него сослаться)
 exec > >(tee -a "$LOG") 2>&1
+
+# Дружелюбный обработчик любой неожиданной ошибки в тяжёлых шагах ниже
+# (cut_pauses/transcribe/match — каждый по 30-90 минут; падение на середине
+# реальный кейс: OOM, сетевые сбои при скачивании моделей, missing HF_TOKEN).
+# Без trap'а пользователь видит сырой Python traceback и закрытое окно.
+on_error() {
+    echo ""
+    echo "✗ ОШИБКА на одном из шагов выше."
+    echo "Лог: $LOG"
+    echo ""
+    echo "Открой Claude Code в этой папке и попроси:"
+    echo "  посмотри $LOG и почини"
+    echo ""
+    read -p "Нажми Enter чтобы закрыть..." _
+    exit 1
+}
+trap on_error ERR
 
 log_step() {
     echo ""
@@ -683,6 +705,7 @@ log_step() {
 
 # --- 5. Проверка обновлений (тихая) ---
 
+# TODO: remote URL guard — Task 13. До этого fetch может молча падать без origin.
 if git fetch origin --quiet 2>/dev/null; then
     BEHIND=$(git rev-list --count HEAD..origin/main 2>/dev/null || echo "0")
     if [ "$BEHIND" -gt 0 ]; then
@@ -707,12 +730,13 @@ done < <(find "$PROJECT/raw" -type f \( -iname '*.mp4' -o -iname '*.mov' -o -ina
 ETA_MIN=$((TOTAL_SEC / 60))
 echo "Найдено видео: $VIDEO_COUNT, общая длительность: $((TOTAL_SEC / 60)) минут"
 echo "Примерное время обработки: ~$ETA_MIN минут (можно оставить и заняться другим)"
+echo "Скрипт идемпотентный — если упадёт на середине, можно запускать повторно: уже обработанные файлы пропустятся."
 
 # --- 7. cut_pauses войсовера ---
 
 if [ -d "$PROJECT/raw/voiceover" ] && [ -n "$(ls -A "$PROJECT/raw/voiceover" 2>/dev/null)" ]; then
     log_step "cut_pauses войсовера (--profile slava)"
-    python _scripts/cut_pauses.py "$PROJECT/raw/voiceover" \
+    .venv/bin/python _scripts/cut_pauses.py "$PROJECT/raw/voiceover" \
         --output "$PROJECT/cuts/voiceover" \
         --profile slava
 fi
@@ -721,7 +745,7 @@ fi
 
 if [ -d "$PROJECT/raw/interviews" ] && [ -n "$(ls -A "$PROJECT/raw/interviews" 2>/dev/null)" ]; then
     log_step "cut_pauses интервью (--profile hero)"
-    python _scripts/cut_pauses.py "$PROJECT/raw/interviews" \
+    .venv/bin/python _scripts/cut_pauses.py "$PROJECT/raw/interviews" \
         --output "$PROJECT/cuts/interviews" \
         --profile hero
 fi
@@ -730,7 +754,7 @@ fi
 
 log_step "Транскрибация (whisperx + диаризация)"
 if [ -d "$PROJECT/cuts" ]; then
-    python _scripts/transcribe.py "$PROJECT/cuts" \
+    .venv/bin/python _scripts/transcribe.py "$PROJECT/cuts" \
         --speakers 2 \
         --json \
         --output "$PROJECT/transcripts"
@@ -742,12 +766,12 @@ fi
 # --- 10. match_timecodes search ---
 
 log_step "Поиск кандидатов таймкодов"
-python _scripts/match_timecodes.py search "$PROJECT"
+.venv/bin/python _scripts/match_timecodes.py search "$PROJECT"
 
 # --- 11. words_compact для агента ---
 
 log_step "Подготовка words_compact для агента"
-python _scripts/match_timecodes.py compact "$PROJECT"
+.venv/bin/python _scripts/match_timecodes.py compact "$PROJECT"
 
 # --- 12. Финал ---
 
