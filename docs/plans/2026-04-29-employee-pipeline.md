@@ -272,6 +272,11 @@ if [ "$(uname -m)" != "arm64" ]; then
 fi
 echo "✓ Apple Silicon"
 
+# Очистить флаг успешного завершения — будет создан в самом конце.
+# Иначе предыдущий успешный запуск + текущий аборт на HF_TOKEN оставит stale flag,
+# и prepare.command поверит, что setup ok.
+rm -f setup_complete.flag
+
 log_step "Homebrew"
 if ! command -v brew &> /dev/null; then
     echo "Homebrew не найден, устанавливаю..."
@@ -282,6 +287,22 @@ else
     echo "✓ Homebrew установлен ($(brew --version | head -1))"
     brew update
 fi
+
+# Защита от Rosetta x86 Homebrew (typично после миграции с Intel Mac).
+# Если у пользователя есть /usr/local/bin/brew (x86), `command -v brew` найдёт
+# его раньше /opt/homebrew/bin/brew, и мы поставим x86-пакеты под Rosetta —
+# torch и whisper позже грохнутся с непонятными ошибками.
+BREW_PREFIX=$(brew --prefix)
+if [ "$BREW_PREFIX" != "/opt/homebrew" ]; then
+    echo "ОШИБКА: найден x86 Homebrew по пути $BREW_PREFIX (Rosetta)."
+    echo "Нужна arm64-версия Homebrew по /opt/homebrew."
+    echo ""
+    echo "Удали x86 Homebrew:"
+    echo "  /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh)\""
+    echo "Затем перезапусти setup.command — он поставит arm64-версию автоматически."
+    exit 1
+fi
+echo "✓ Homebrew по $BREW_PREFIX (arm64)"
 
 log_step "ffmpeg"
 if ! command -v ffmpeg &> /dev/null || ! command -v ffprobe &> /dev/null; then
@@ -334,7 +355,7 @@ echo "✓ зависимости установлены"
 
 log_step "Прогрев моделей (faster-whisper large-v3 + whisperx aligner)"
 mkdir -p models
-python3 - <<'PY'
+.venv/bin/python - <<'PY'
 import os
 os.environ['HF_HOME'] = os.path.join(os.getcwd(), 'models', 'hf')
 os.environ['XDG_CACHE_HOME'] = os.path.join(os.getcwd(), 'models', 'cache')
@@ -379,7 +400,7 @@ if [ -z "$HF_TOKEN" ] || [ "$HF_TOKEN" = "hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 fi
 
 # Валидация токена
-python3 - <<'PY'
+.venv/bin/python - <<'PY'
 import os
 from huggingface_hub import HfApi
 try:
@@ -392,7 +413,7 @@ except Exception as e:
 PY
 
 # Проверка согласия с лицензией pyannote
-python3 - <<'PY'
+.venv/bin/python - <<'PY'
 import os
 from huggingface_hub import HfApi
 try:
