@@ -11,7 +11,7 @@
 **Выход:** `assembly/<имя>_rough_cut_local.fcpxml` для импорта в DaVinci. Дальнейшая работа в DaVinci — на сотруднике, обратно мне ничего не отдаёт.
 
 **Граница ответственности:**
-- Я: пишу скрипты, скилл `/match-timecodes`, скилл `/new-project`, обновляю репо. Сценарии пишу у себя через `/yt-write` и отдаю готовый `script.csv`.
+- Я: пишу скрипты, скилл `/match-timecodes`, обновляю репо. Сценарии пишу у себя через `/yt-write` и отдаю готовый `script.csv`.
 - Сотрудник: устанавливает инструмент один раз, получает сценарий, запускает три фазы, импортирует FCPXML в DaVinci.
 
 ## Принятые ключевые решения
@@ -22,7 +22,7 @@
 4. **Гибридный setup:** детерминированный `setup.command` ставит всё через brew + uv + npm. Claude Code как fallback для траблшутинга («открой Claude Code, попроси: "почини, вот лог"»).
 5. **Cut_pauses внутри пайплайна** на машине сотрудника (не у меня).
 6. **Подход 2 — два скрипта `prepare.command` и `assemble.command`** с агентным шагом `/match-timecodes` между ними.
-7. **Структура папок проекта создаётся через `/new-project` в Claude Code** (новый скилл).
+7. **Структура папок проекта создаётся через прямой запрос в Claude Code** («создай папки для нового проекта 2026-05-myvideo» — модель сама разберётся, без отдельного скилла).
 8. **Отдельный приватный репо `factory-employee`** (вариант A) — чистая релизная версия, без черновиков основного `factory`.
 
 ## Архитектура — три фазы
@@ -37,7 +37,7 @@
       └─ проверка .env (HF_TOKEN + согласие с лицензиями pyannote)
 
 [2] ПОДГОТОВКА (каждый проект)
-    /new-project 2026-05-myvideo                   # в Claude Code
+    Claude Code: «создай структуру для нового проекта 2026-05-myvideo»
     [сотрудник копирует видео и кладёт script.csv]
     prepare.command projects/2026-05-myvideo
       ├─ cut_pauses (raw → cuts)
@@ -80,7 +80,6 @@ factory-employee/                   ← отдельный приватный р
                                        match_timecodes.py, build_xml.py
                                        (зеркалятся из основного factory)
   .claude/skills/match-timecodes/   ← существующий скилл
-  .claude/skills/new-project/       ← новый скилл, создаёт структуру проекта
   CLAUDE.md                         ← (опц.) кратко: что есть, как ставить
   .gitignore                        ← .venv/, models/, projects/, .env, *.log
   .venv/                            ← создаётся setup'ом
@@ -97,7 +96,7 @@ factory-employee/                   ← отдельный приватный р
 
 **Минимум ручных действий сотрудника на новый проект:**
 
-1. В Claude Code: `/new-project 2026-05-myvideo` → создана структура.
+1. В Claude Code: «создай структуру для нового проекта 2026-05-myvideo» — Claude Code сам сделает `raw/voiceover/`, `raw/interviews/`, `script/script.csv` (пустой шаблон с заголовками).
 2. Скопировать видео в `raw/voiceover/` и `raw/interviews/`.
 3. Положить присланный `script.csv` в `script/`.
 4. Двойной клик `prepare.command` → выбрать проект из списка → ждать.
@@ -187,7 +186,7 @@ factory-employee/                   ← отдельный приватный р
 2. Открой Claude Code → /login → авторизация.
 
 ## Каждый новый проект
-1. Claude Code: /new-project 2026-05-myvideo
+1. Claude Code: "создай структуру для нового проекта 2026-05-myvideo"
 2. Видео:
    raw/voiceover/   ← войсовер Славы
    raw/interviews/  ← интервью героя
@@ -202,16 +201,15 @@ factory-employee/                   ← отдельный приватный р
 "посмотри projects/<имя>/.factory.log и почини"
 ```
 
-## Скилл `/new-project`
+## Создание структуры нового проекта
 
-Новый скилл `.claude/skills/new-project/SKILL.md`. Аргумент: имя проекта в формате `YYYY-MM-description`.
-
-Создаёт:
+Делается прямым запросом в Claude Code: «создай структуру для нового проекта 2026-05-myvideo». Claude Code сам создаст:
 - `projects/<имя>/raw/voiceover/`
 - `projects/<имя>/raw/interviews/`
 - `projects/<имя>/script/`
-- `projects/<имя>/script/script.csv` — пустой шаблон с заголовками (синхронно с тем форматом, который читает `match_timecodes.py search`).
-- `projects/<имя>/project.md` (опц.) — небольшой шаблон для заметок.
+- `projects/<имя>/script/script.csv` — пустой шаблон с заголовками.
+
+Отдельный скилл не нужен: Claude Code понимает контекст репо (по `CLAUDE.md` и структуре существующих проектов в `factory`), формат `script.csv` есть в `_scripts/match_timecodes.py`. README сотрудника даёт точную формулировку запроса как пример.
 
 ## Что НЕ делаем
 
@@ -243,7 +241,6 @@ factory-employee/                   ← отдельный приватный р
 - `README.md` (полный)
 - `QUICKSTART.md` (короткий)
 - `docs/setup/hf_token/*.png`
-- `.claude/skills/new-project/SKILL.md`
 - `.gitignore` с `.venv/`, `models/`, `projects/`, `.env`, `setup.log`, `setup_complete.flag`, `.factory.log`
 - `CLAUDE.md` для employee-репо (короткий, что это за репо и как им пользоваться — опц.)
 
@@ -251,7 +248,7 @@ factory-employee/                   ← отдельный приватный р
 - `_scripts/cut_pauses.py`, `_scripts/transcribe.py`, `_scripts/match_timecodes.py`, `_scripts/build_xml.py` — как есть, без изменений.
 - `.claude/skills/match-timecodes/` — как есть.
 
-**В основном `factory` создаётся новый скилл `/new-project`** (одновременно для меня и для зеркалирования в employee-репо).
+**В основном `factory` ничего не меняется** — новых скиллов не создаём, только зеркалируем `_scripts/` и существующий `/match-timecodes` в `factory-employee`.
 
 ## Открытые вопросы / риски
 

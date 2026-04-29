@@ -110,7 +110,8 @@ HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 - `update.command` — синхронизация с git.
 - `_scripts/*.py` — копии скриптов из основного `factory`.
 - `.claude/skills/match-timecodes/` — скилл для агентной верификации.
-- `.claude/skills/new-project/` — скилл создания структуры нового проекта.
+
+Структура папок проекта создаётся прямым запросом в Claude Code («создай структуру для проекта 2026-05-...»), отдельный скилл не нужен.
 
 **Что НЕ лежит:** ничего из основного `factory`, кроме копий выше. Никаких черновиков, экспериментов, других проектов.
 
@@ -363,7 +364,7 @@ if [ ! -f ".env" ]; then
     echo "  7. Отредактируй .env (TextEdit), вставь токен"
     echo "  8. Перезапусти setup.command"
     echo ""
-    echo "Полная инструкция со скриншотами: docs/setup/hf_token/"
+    echo "Полная инструкция: docs/setup/hf_token/README.md"
     exit 1
 fi
 
@@ -423,10 +424,7 @@ echo "     cd $(pwd)"
 echo "     claude"
 echo "     /login    (авторизация в Anthropic)"
 echo ""
-echo "  2. В Claude Code создай первый проект:"
-echo "     /new-project 2026-05-myvideo"
-echo ""
-echo "  3. См. QUICKSTART.md для остальных шагов."
+echo "  2. См. QUICKSTART.md для шагов на каждый новый проект."
 echo ""
 ```
 
@@ -590,7 +588,7 @@ if [ -z "$PROJECT" ]; then
     done
     if [ ${#PROJECTS[@]} -eq 0 ]; then
         echo ""
-        echo "Нет проектов. Создай через Claude Code: /new-project YYYY-MM-описание"
+        echo "Нет проектов. Создай через Claude Code: попроси \"создать структуру для нового проекта YYYY-MM-описание\""
         read -p "Нажми Enter чтобы закрыть..." _
         exit 1
     fi
@@ -612,7 +610,7 @@ LOG="$PROJECT/.factory.log"
 
 if [ ! -d "$PROJECT/raw" ]; then
     echo "ОШИБКА: $PROJECT/raw не существует."
-    echo "Создай через Claude Code: /new-project $PROJ_NAME"
+    echo "Создай через Claude Code: попроси \"создать структуру для проекта $PROJ_NAME\""
     read -p "Нажми Enter чтобы закрыть..." _
     exit 1
 fi
@@ -884,158 +882,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 ---
 
-## Task 8: Скилл `/new-project` в основном `factory`
-
-**Files:**
-- Create: `C:\Users\Alex\Videos\factory\.claude\skills\new-project\SKILL.md`
-
-**Step 1: Понять формат `script.csv`**
-
-Прочитать `_scripts/match_timecodes.py` секцию чтения CSV (поиск по `csv.reader` или `read_csv`), чтобы знать какие колонки нужны:
-
-```bash
-grep -n "csv\|script.csv\|reader" C:/Users/Alex/Videos/factory/_scripts/match_timecodes.py | head -20
-```
-
-Также посмотреть на существующий `script.csv` в любом проекте:
-
-```bash
-head -3 C:/Users/Alex/Videos/factory/projects/2026-03-thermobags/script/script.csv 2>/dev/null
-```
-
-(Если проектов нет под рукой — формат описан в CLAUDE.md основного `factory`: «формат части — `file.ext: MM:SS.ss — MM:SS.ss`».)
-
-**Step 2: Написать SKILL.md**
-
-```markdown
----
-name: new-project
-description: Создаёт структуру папок нового проекта в projects/. Использование: /new-project YYYY-MM-описание (например: /new-project 2026-05-tulips-may).
----
-
-# new-project
-
-Создаёт стандартную структуру проекта в `projects/<имя>/`:
-
-```
-projects/<имя>/
-  raw/
-    voiceover/    ← сюда положить войсовер Славы
-    interviews/   ← сюда положить интервью героя
-  script/
-    script.csv    ← положить сценарий (созданный шаблон с заголовками)
-  project.md      ← заметки по проекту (опц.)
-```
-
-## Шаги
-
-1. Спросить пользователя имя проекта в формате `YYYY-MM-описание`, если не передано.
-2. Проверить что `projects/<имя>/` НЕ существует. Если существует — спросить разрешение перезаписать.
-3. Создать `projects/<имя>/raw/voiceover/` (пустую).
-4. Создать `projects/<имя>/raw/interviews/` (пустую).
-5. Создать `projects/<имя>/script/`.
-6. Создать `projects/<имя>/script/script.csv` со следующим содержимым:
-
-   ```csv
-   Слава,Слава timecode,Герой,Герой timecode
-   ```
-
-   (Это пустой шаблон с заголовками. Сотрудник кладёт сюда свой сценарий, заполняя колонки `Слава` и `Герой`. Колонки таймкодов заполнятся автоматически фазой prepare + assemble.)
-
-7. Создать `projects/<имя>/project.md` с шаблоном:
-
-   ```markdown
-   # <имя>
-
-   Дата старта: YYYY-MM-DD
-   Статус: подготовка
-
-   ## Заметки
-
-   - 
-   ```
-
-8. Сообщить пользователю что структура создана, перечислить путь и следующий шаг:
-   «Структура создана: `projects/<имя>/`. Дальше:
-   - Скопируй войсовер в `projects/<имя>/raw/voiceover/`
-   - Скопируй интервью в `projects/<имя>/raw/interviews/`
-   - Положи сценарий в `projects/<имя>/script/script.csv`
-   - Двойной клик `prepare.command` (или скажи мне `запусти prepare для <имя>`)»
-
-## Важное
-
-- Имя должно соответствовать конвенции `YYYY-MM-описание` (например `2026-05-tulips-may`).
-- Если `projects/` не существует в репо — создать.
-- НЕ трогать существующие проекты.
-```
-
-**Step 3: Smoke-тест скилла**
-
-В Claude Code (или mock через прямые tool вызовы) попробовать:
-
-```
-/new-project 2026-05-test
-```
-
-Ожидаемое:
-- Создана `projects/2026-05-test/raw/voiceover/`
-- Создана `projects/2026-05-test/raw/interviews/`
-- Создан `projects/2026-05-test/script/script.csv` с заголовками
-- Создан `projects/2026-05-test/project.md`
-
-Проверка:
-
-```bash
-ls -la C:/Users/Alex/Videos/factory/projects/2026-05-test/
-cat C:/Users/Alex/Videos/factory/projects/2026-05-test/script/script.csv
-```
-
-Если всё ок — удалить тестовый проект:
-
-```bash
-rm -rf C:/Users/Alex/Videos/factory/projects/2026-05-test/
-```
-
-(Этот шаг smoke может пропуститься, если просто визуально верифицирован SKILL.md.)
-
-**Step 4: Commit в основном factory**
-
-```bash
-cd C:/Users/Alex/Videos/factory
-git add .claude/skills/new-project/SKILL.md
-git commit -m "feat: скилл /new-project — создание структуры проекта
-
-Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
-```
-
----
-
-## Task 9: Зеркалировать `/new-project` в `factory-employee`
-
-**Files:**
-- Copy: `C:\Users\Alex\Videos\factory\.claude\skills\new-project\SKILL.md` → `C:\Users\Alex\Videos\factory-employee\.claude\skills\new-project\SKILL.md`
-
-**Step 1: Скопировать**
-
-```bash
-mkdir -p C:/Users/Alex/Videos/factory-employee/.claude/skills/new-project/
-cp C:/Users/Alex/Videos/factory/.claude/skills/new-project/SKILL.md \
-   C:/Users/Alex/Videos/factory-employee/.claude/skills/new-project/
-```
-
-**Step 2: Commit**
-
-```bash
-cd C:/Users/Alex/Videos/factory-employee
-git add .claude/skills/new-project/
-git commit -m "chore: скилл /new-project зеркалирован из factory
-
-Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
-```
-
----
-
-## Task 10: README.md (полный) и QUICKSTART.md
+## Task 8: README.md (полный) и QUICKSTART.md
 
 **Files:**
 - Modify: `C:\Users\Alex\Videos\factory-employee\README.md` (полное наполнение)
@@ -1081,7 +928,7 @@ FCPXML для DaVinci Resolve
 
 См. [QUICKSTART.md](QUICKSTART.md) раздел «Один раз».
 
-Подробности по HF_TOKEN: [docs/setup/hf_token/](docs/setup/hf_token/) (со скриншотами).
+Подробности по HF_TOKEN: [docs/setup/hf_token/README.md](docs/setup/hf_token/README.md).
 
 ## Структура репо
 
@@ -1090,10 +937,10 @@ FCPXML для DaVinci Resolve
 - `assemble.command` — фаза сборки (на каждый проект).
 - `update.command` — обновление инструмента (`git pull` + переустановка deps).
 - `_scripts/` — Python-скрипты (cut_pauses, transcribe, match_timecodes, build_xml).
-- `.claude/skills/` — скиллы для Claude Code (`/new-project`, `/match-timecodes`).
+- `.claude/skills/match-timecodes/` — скилл для Claude Code (агентная верификация таймкодов).
 - `requirements.txt` — Python-зависимости с пин-версиями.
 - `.env.example` — шаблон для HF_TOKEN.
-- `projects/<имя>/` — рабочие директории каждого видео (создаются `/new-project`).
+- `projects/<имя>/` — рабочие директории каждого видео (создаются по запросу в Claude Code).
 
 ## Если что-то сломалось
 
@@ -1125,7 +972,7 @@ Claude разберёт ошибку и предложит фикс. Если у
 ## Один раз
 
 1. Двойной клик `setup.command`. Жди ~10 минут (скачивание моделей).
-2. Если попросит создать `.env` — следуй инструкции в Терминале или см. `docs/setup/hf_token/` (скриншоты).
+2. Если попросит создать `.env` — следуй инструкции в Терминале или см. [docs/setup/hf_token/README.md](docs/setup/hf_token/README.md).
 3. Открой Claude Code:
    - В Терминале: `cd /путь/к/factory-employee && claude`
    - При первом запуске: `/login` → авторизация в Anthropic.
@@ -1134,11 +981,13 @@ Claude разберёт ошибку и предложит фикс. Если у
 
 ### Шаг 1. Создать проект (в Claude Code)
 
+В Claude Code напиши:
+
 ```
-/new-project 2026-05-tulips-may
+создай структуру для нового проекта 2026-05-tulips-may
 ```
 
-Имя в формате `YYYY-MM-описание`. Создастся структура папок.
+Имя в формате `YYYY-MM-описание`. Claude Code сам создаст папки `raw/voiceover/`, `raw/interviews/`, `script/` и пустой `script.csv`.
 
 ### Шаг 2. Положить материалы
 
@@ -1205,33 +1054,19 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 ---
 
-## Task 11: Скриншоты HF_TOKEN
+## Task 9: HF_TOKEN docs
 
 **Files:**
-- Create: `C:\Users\Alex\Videos\factory-employee\docs\setup\hf_token\01-register.png`
-- Create: `C:\Users\Alex\Videos\factory-employee\docs\setup\hf_token\02-segmentation-agree.png`
-- Create: `C:\Users\Alex\Videos\factory-employee\docs\setup\hf_token\03-diarization-agree.png`
-- Create: `C:\Users\Alex\Videos\factory-employee\docs\setup\hf_token\04-create-token.png`
-- Create: `C:\Users\Alex\Videos\factory-employee\docs\setup\hf_token\05-paste-to-env.png`
 - Create: `C:\Users\Alex\Videos\factory-employee\docs\setup\hf_token\README.md`
 
-**Step 1: Сделать скриншоты**
+**Step 1: Написать README.md**
 
-Это ручной шаг. Открой:
-- huggingface.co (login/signup)
-- huggingface.co/pyannote/segmentation-3.0
-- huggingface.co/pyannote/speaker-diarization-3.1
-- huggingface.co/settings/tokens (Create new token)
-- TextEdit с открытым `.env`
-
-Сделай 5 скриншотов с обводкой нужных кнопок (red rectangle через Preview annotation).
-
-**Step 2: README.md в hf_token/**
+Без скриншотов на этом шаге — добавит сотрудник после первого setup'а или я отдельным коммитом, если будет нужно. Текстовая инструкция самодостаточна.
 
 ```markdown
 # Получение HF_TOKEN
 
-`pyannote/speaker-diarization-3.1` (диаризация в transcribe) требует доступ через HuggingFace токен. Это бесплатно, но нужна одноразовая регистрация и согласие с лицензиями.
+`pyannote/speaker-diarization-3.1` (диаризация в `transcribe.py`) требует доступ через HuggingFace токен. Это бесплатно, но нужна одноразовая регистрация и согласие с лицензиями.
 
 ## Шаги
 
@@ -1239,21 +1074,15 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 Зайди на https://huggingface.co и зарегистрируйся (или войди если есть аккаунт).
 
-![](01-register.png)
-
 ### 2. Согласие с лицензией pyannote/segmentation-3.0
 
 Зайди на https://huggingface.co/pyannote/segmentation-3.0
-Заполни форму и нажми **Agree and access repository**.
-
-![](02-segmentation-agree.png)
+Заполни форму («Affiliation» / «What's your purpose» — можно «video editing») и нажми **Agree and access repository**.
 
 ### 3. Согласие с лицензией pyannote/speaker-diarization-3.1
 
 Зайди на https://huggingface.co/pyannote/speaker-diarization-3.1
 То же — заполни и **Agree**.
-
-![](03-diarization-agree.png)
 
 ### 4. Создать токен
 
@@ -1261,17 +1090,18 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 **New token** → дай название (например, `factory`) → тип **read** → **Generate token**.
 Скопируй токен (он начинается с `hf_`).
 
-![](04-create-token.png)
-
 ### 5. Положить токен в .env
 
 В Finder открой папку `factory-employee`.
-Скопируй `.env.example` → `.env` (через двойной клик скопируй и переименуй).
+В Терминале (или через Finder → правый клик `.env.example` → Duplicate → переименовать в `.env`):
+
+```bash
+cp .env.example .env
+```
+
 Открой `.env` в TextEdit (правый клик → Open With → TextEdit).
 Замени `hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` на свой токен.
 Сохрани (Cmd+S).
-
-![](05-paste-to-env.png)
 
 ### 6. Проверка
 
@@ -1285,21 +1115,19 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ```
 ```
 
-**Step 3: Commit**
+**Step 2: Commit**
 
 ```bash
 cd C:/Users/Alex/Videos/factory-employee
 git add docs/
-git commit -m "docs: HF_TOKEN setup guide со скриншотами
+git commit -m "docs: HF_TOKEN setup guide
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ```
 
-(Если скриншотов ещё нет — закоммитить сначала только README.md, скриншоты добавить отдельным коммитом.)
-
 ---
 
-## Task 12: Smoke setup на Mac (VM или сотрудник)
+## Task 10 (Manual): Smoke setup на Mac (VM или сотрудник)
 
 **Files:** —
 
@@ -1356,7 +1184,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 ---
 
-## Task 13: Smoke прохода на маленьком тестовом проекте
+## Task 11 (Manual): Smoke прохода на маленьком тестовом проекте
 
 **Files:** —
 
@@ -1369,11 +1197,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 **Step 2: Прогнать**
 
-В Claude Code:
-
-```
-/new-project 2026-05-smoke-test
-```
+В Claude Code попроси: «создай структуру для проекта 2026-05-smoke-test».
 
 Скопировать видео, положить script.csv:
 
@@ -1421,7 +1245,7 @@ cp test-script.csv projects/2026-05-smoke-test/script/script.csv
 
 ---
 
-## Task 14: Регрессия на термосумках
+## Task 12 (Manual): Регрессия на термосумках
 
 **Files:** —
 
@@ -1433,11 +1257,7 @@ cp test-script.csv projects/2026-05-smoke-test/script/script.csv
 
 **Step 2: Прогнать полный пайплайн**
 
-В Claude Code:
-
-```
-/new-project 2026-03-thermobags-regression
-```
+В Claude Code попроси: «создай структуру для проекта 2026-03-thermobags-regression».
 
 Скопировать видео и подготовленный script.csv.
 
@@ -1483,7 +1303,7 @@ print('Регрессия:', count_clips('регрессия.fcpxml'))
 
 ---
 
-## Task 15: Push в приватный github repo и доступ сотруднику
+## Task 13 (Manual): Push в приватный github repo и доступ сотруднику
 
 **Files:** —
 
@@ -1525,7 +1345,7 @@ github.com/<your-user>/factory-employee → Settings → Collaborators → Add p
    Жди ~10 минут.
 
 4. Когда setup попросит .env с HF_TOKEN — следуй инструкции.
-   Подробности со скриншотами: docs/setup/hf_token/README.md
+   Подробности: docs/setup/hf_token/README.md
 
 5. Дальше — QUICKSTART.md.
 
@@ -1560,7 +1380,7 @@ github.com/<your-user>/factory-employee → Settings → Collaborators → Add p
 ## Откат
 
 Откат в новом репо тривиальный — `git reset --hard <hash>` или удалить локальный клон и склонить заново.
-В основном `factory` единственное изменение — Task 8 (новый скилл `/new-project`). Откат — `git revert` коммита.
+В основном `factory` ничего не меняется. Откат для нового репо — `git reset --hard <hash>` или удалить локальный клон.
 
 ## Открытые вопросы / риски (из дизайна)
 
