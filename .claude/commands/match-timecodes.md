@@ -343,7 +343,26 @@ iter += 1
   low confidence:   N строк
   missing:          N строк (если есть)
 
+  Validate: {iter} итерации фикса
+  Осталось проблем: {len(final_problem_set)}
+    overlaps:    M
+    within-word: K
+```
+
+**Если `final_problem_set` пустой:**
+
+```
 Следующий шаг: python _scripts/match_timecodes.py snap {project_dir}
+```
+
+**Если непустой:**
+
+```
+⚠ snap будет заблокирован preflight'ом из-за оверлапов.
+  Опции:
+    - переверифицировать вручную через /match-timecodes повторно;
+    - смотреть проблемы в script/validation_report.json;
+    - принять как есть и снять блокировку snap (не рекомендуется).
 ```
 
 ## Обработка ошибок
