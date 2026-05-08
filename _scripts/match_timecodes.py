@@ -865,7 +865,7 @@ def find_internal_break(file_path, word_at_start, word_at_end,
         return word and (word["end"] - word["start"]) > SUSPICIOUS_WORD_DURATION_S
 
     if silencedetect_fn is None:
-        return new_start, new_end
+        silencedetect_fn = lambda path, ts, te: detect_silences_in_range(path, ts, te)
 
     if is_suspicious(word_at_start):
         silences = silencedetect_fn(file_path, word_at_start["start"], word_at_start["end"])
