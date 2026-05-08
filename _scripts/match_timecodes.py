@@ -43,6 +43,65 @@ def fmt_tc(seconds: float) -> str:
     return f"{m:02d}:{s:05.2f}"
 
 
+# ─── Pack-формат (этап B1: video-use ideas) ────────────────────────────────
+
+def pack_words_into_phrases(words: list[dict], silence_threshold: float = 0.5) -> list[dict]:
+    """Группирует word-level entries во фразы.
+
+    Разрыв на:
+      - паузе >= silence_threshold между концом предыдущего слова и началом текущего,
+      - смене speaker (если поле speaker присутствует).
+
+    Args:
+        words: список dict'ов с полями word, start, end и опционально speaker.
+        silence_threshold: порог паузы в секундах для разрыва фразы.
+
+    Returns:
+        Список фраз: {start, end, text, speaker}. speaker=None если поля нет.
+    """
+    phrases: list[dict] = []
+    cur_words: list[dict] = []
+    cur_start: float | None = None
+    cur_speaker: str | None = None
+    prev_end: float | None = None
+
+    def flush() -> None:
+        nonlocal cur_words, cur_start, cur_speaker
+        if not cur_words:
+            return
+        text = " ".join((w.get("word") or "").strip() for w in cur_words if (w.get("word") or "").strip())
+        end_t = cur_words[-1].get("end", cur_start or 0.0)
+        phrases.append({
+            "start": cur_start,
+            "end": end_t,
+            "text": text,
+            "speaker": cur_speaker,
+        })
+        cur_words = []
+        cur_start = None
+        cur_speaker = None
+
+    for w in words:
+        start = w.get("start")
+        if start is None:
+            continue
+        speaker = w.get("speaker")
+
+        if cur_speaker is not None and speaker is not None and speaker != cur_speaker:
+            flush()
+        elif prev_end is not None and start - prev_end >= silence_threshold:
+            flush()
+
+        if cur_start is None:
+            cur_start = start
+            cur_speaker = speaker
+        cur_words.append(w)
+        prev_end = w.get("end", start)
+
+    flush()
+    return phrases
+
+
 # ─── Текстовый индекс ──────────────────────────────────────────────────────
 
 def build_text_index(words: list[dict]) -> tuple[str, list[int]]:
