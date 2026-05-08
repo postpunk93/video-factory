@@ -147,7 +147,7 @@ INDEX    START    END WORD
 
 Если агент вернул старый формат с `chosen` (single dict) — нормализуй в `chosen_parts: [chosen]`.
 
-## 6.5. Validate verified.json и fix-loop
+## 7.1. Validate verified.json и fix-loop
 
 Запусти автоматический цикл проверки и точечной починки. Лимит — 3 итерации; после — эскалация.
 
@@ -189,7 +189,7 @@ problem_set = set(o["row_idx"] for o in overlaps) \
 
 **Стоп-условия:**
 
-1. `problem_set` пустой — break, перейти к шагу 7. Validate чисто.
+1. `problem_set` пустой — break, перейти к шагу 8. Validate чисто.
 2. `iter == 3` — break, эскалировать (см. ниже).
 3. `prev_problem_set is not None and len(problem_set) >= len(prev_problem_set)` — множество не уменьшилось → break, эскалировать (защита от тупика).
 
@@ -199,9 +199,9 @@ problem_set = set(o["row_idx"] for o in overlaps) \
 [Iter {iter}]: validate → {len(overlaps)} оверлапов + {len(within_word)} within-word → {len(problem_set)} проблемных строк
 ```
 
-— и переходим к шагу 6.6.
+— и переходим к шагу 7.2.
 
-**Эскалация** (печатается в stdout, скилл идёт к шагу 7):
+**Эскалация** (печатается в stdout, скилл идёт к шагу 8):
 
 ```
 ⚠ После {iter} итераций фикса осталось {len(problem_set)} проблем:
@@ -213,7 +213,7 @@ problem_set = set(o["row_idx"] for o in overlaps) \
 script.csv не будет сгенерирован snap'ом, пока есть оверлапы.
 ```
 
-## 6.6. Подготовь fix-payload для проблемных строк
+## 7.2. Подготовь fix-payload для проблемных строк
 
 **Row picker.** Из `verified.json` выбери только записи с `row_idx in problem_set`.
 
@@ -243,9 +243,9 @@ script.csv не будет сгенерирован snap'ом, пока есть
 
 `words_context` строится так же, как в шаге 4: из соответствующего `words_compact.txt` берутся все строки, у которых `START` попадает в `[part.start - 10, part.end + 10]` для каждого парта в `current_chosen_parts`.
 
-Сохрани полный список `fix_payload[]` в памяти — он передаётся агенту в шаге 6.7.
+Сохрани полный список `fix_payload[]` в памяти — он передаётся агенту в шаге 7.3.
 
-## 6.7. Запусти fix-агентов
+## 7.3. Запусти fix-агентов
 
 **Чанкинг.** Если `len(fix_payload) <= 30` — 1 агент. Иначе — раздели на 2 примерно равные части и запусти 2 параллельных Explore-агента.
 
@@ -292,11 +292,11 @@ JSON-массив (ничего лишнего, можно обернуть в `
 
 ### Проблемные строки
 
-{вставь fix_payload[] из шага 6.6}
+{вставь fix_payload[] из шага 7.2}
 
 ---
 
-## 6.8. Смержи результаты в verified.json
+## 7.4. Смержи результаты в verified.json
 
 **Парсинг ответов агентов.** Из каждого агента — JSON-массив. Если вернулось обёрнуто в ```json ... ``` — сними обёртку и спарси. Объедини ответы всех fix-агентов в один словарь `fixed: dict[row_idx, result]`.
 
@@ -332,9 +332,9 @@ prev_problem_set = problem_set
 iter += 1
 ```
 
-И возврат к шагу 6.5 (новый прогон validate).
+И возврат к шагу 7.1 (новый прогон validate).
 
-## 7. Выведи итоговую сводку
+## 8. Выведи итоговую сводку
 
 ```
 ✅ Верификация завершена. Результат: {project_dir}/script/verified.json
@@ -374,5 +374,5 @@ iter += 1
   - Если `validation_report.json` не записан после bash-вызова — фатал, останови скилл, выведи последние 20 строк stdout/stderr.
   - Если fix-агент вернул `chosen_parts: []` или `confidence: "missing"` — сохрани как есть; следующий iter подхватит, либо эскалация.
   - Если на iter=3 множество проблем больше, чем на iter=1 — печатай warning «фикс делает хуже» и эскалируй.
-  - Если `candidates.json` исчез между шагами 1 и 6.5 — fail loudly, останови скилл.
+  - Если `candidates.json` исчез между шагами 1 и 7.1 — fail loudly, останови скилл.
   - Защита от зацикливания: если `len(problem_set) >= len(prev_problem_set)` — эскалируй, не дожидаясь iter=3.
