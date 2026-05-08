@@ -646,6 +646,40 @@ def detect_within_word(rows: list[dict], transcripts: dict[str, list[dict]],
     return out
 
 
+def _load_transcripts_for_validation(project_dir: Path) -> dict[str, list[dict]]:
+    """Грузит все *.transcript.json и возвращает dict[file_basename, words].
+
+    Ключ — имя видеофайла как оно записано в verified.json (с расширением
+    .mov/.mp4/...). Транскрипт файла "X.transcript.json" соответствует
+    источнику "X.<ext>" — для матчинга используем stem без `.transcript`.
+    """
+    tr_dir = project_dir / "transcripts"
+    out: dict[str, list[dict]] = {}
+    if not tr_dir.exists():
+        return out
+    for jp in tr_dir.glob("*.transcript.json"):
+        with open(jp, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        words = []
+        for seg in data.get("segments", []):
+            words.extend(seg.get("words", []))
+        # Маппим на оригинальные имена видеофайлов (с расширением).
+        # verified.json содержит file как "X.mov" — ищем все возможные ext.
+        stem = jp.name.replace(".transcript.json", "")
+        for ext in (".mov", ".mp4", ".mkv", ".avi", ".MOV", ".MP4"):
+            candidate = project_dir / "raw" / "voiceover" / f"{stem}{ext}"
+            if not candidate.exists():
+                candidate = project_dir / "raw" / "interviews" / f"{stem}{ext}"
+            if candidate.exists():
+                out[f"{stem}{ext}"] = words
+                break
+        else:
+            # Фолбэк — кладём по голому stem (validate всё равно отработает,
+            # если verified.json по какой-то причине без расширения).
+            out[stem] = words
+    return out
+
+
 # ─── Поиск кандидатов ──────────────────────────────────────────────────────
 
 def find_candidates(phrase: str, transcripts: dict) -> list[dict]:
@@ -1176,6 +1210,64 @@ def cmd_pack(project_dir: Path, silence_threshold: float = 0.5) -> None:
     print(f"\nИндекс: {index_path}")
 
 
+def cmd_validate(project_dir: Path, word_tol_ms: int = 50,
+                 min_overlap_ms: int = 50) -> int:
+    """B2: validate verified.json — детектит overlap'ы и within-word boundary.
+
+    Returns: 0 если чисто, 1 если есть оверлапы (within-word — только warning).
+    """
+    print(f"=== Validate verified.json: {project_dir.name} ===\n")
+
+    verified_path = project_dir / "script" / "verified.json"
+    if not verified_path.exists():
+        print(f"Ошибка: не найден {verified_path}", file=sys.stderr)
+        return 1
+
+    with open(verified_path, "r", encoding="utf-8") as f:
+        verified = json.load(f)
+
+    # Нормализуем строки: подмешиваем chosen_parts в формате detect_overlaps.
+    rows = []
+    for row in verified["rows"]:
+        chosen = _get_chosen_parts(row)
+        rows.append({
+            "row_idx": row["row_idx"],
+            "chosen_parts": chosen,
+        })
+
+    overlaps = detect_overlaps(rows, min_overlap_ms=min_overlap_ms)
+    transcripts = _load_transcripts_for_validation(project_dir)
+    within = detect_within_word(rows, transcripts, word_tol_ms=word_tol_ms)
+
+    if overlaps:
+        print(f"❌ Word-overlap'ы внутри строк ({len(overlaps)}):")
+        for o in overlaps:
+            print(f"  row {o['row_idx']:>3} {o['file']}: парты {o['part_a']}+{o['part_b']} "
+                  f"пересекаются на {o['intersection_s']}s")
+    else:
+        print("✓ Оверлапов word-границ не найдено")
+
+    if within:
+        print(f"\n⚠ Within-word границы ({len(within)}):")
+        for w in within:
+            print(f"  row {w['row_idx']:>3} part {w['part_idx']} {w['edge']}={w['part_value']:.3f}s "
+                  f"внутри слова '{w['word']}' ({w['word_start']:.3f}-{w['word_end']:.3f})")
+    else:
+        print("✓ Все границы партов на word boundary")
+
+    report = {
+        "overlaps": overlaps,
+        "within_word": within,
+        "thresholds": {"word_tol_ms": word_tol_ms, "min_overlap_ms": min_overlap_ms},
+    }
+    report_path = project_dir / "script" / "validation_report.json"
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, ensure_ascii=False, indent=2)
+    print(f"\nОтчёт: {report_path}")
+
+    return 1 if overlaps else 0
+
+
 # ─── main ───────────────────────────────────────────────────────────────────
 
 def main():
@@ -1198,6 +1290,13 @@ def main():
     p_pack.add_argument("--silence-threshold", type=float, default=0.5,
                         help="Порог паузы для разрыва фразы (default: 0.5s)")
 
+    p_validate = subparsers.add_parser("validate", help="B2: проверка verified.json на оверлапы и within-word")
+    p_validate.add_argument("project_dir", type=Path, help="Путь к папке проекта")
+    p_validate.add_argument("--word-tol-ms", type=int, default=50,
+                            help="Допуск 'граница на word boundary' в мс (default: 50)")
+    p_validate.add_argument("--min-overlap-ms", type=int, default=50,
+                            help="Порог минимального оверлапа в мс (default: 50)")
+
     args = parser.parse_args()
 
     project_dir = args.project_dir.resolve()
@@ -1213,6 +1312,9 @@ def main():
         cmd_compact(project_dir)
     elif args.command == "pack":
         cmd_pack(project_dir, silence_threshold=args.silence_threshold)
+    elif args.command == "validate":
+        sys.exit(cmd_validate(project_dir, word_tol_ms=args.word_tol_ms,
+                              min_overlap_ms=args.min_overlap_ms))
 
 
 if __name__ == "__main__":

@@ -125,5 +125,20 @@ class TestDetectWithinWord(unittest.TestCase):
         self.assertEqual(detect_within_word(rows, {}, word_tol_ms=50), [])
 
 
+class TestValidateOrchestration(unittest.TestCase):
+    def test_load_transcripts_for_validation(self):
+        """Хелпер _load_transcripts_for_validation: читает *.transcript.json
+        и возвращает dict[file_basename, list[word]]."""
+        from match_timecodes import _load_transcripts_for_validation
+        # Используем реальный проект, если есть
+        proj = Path(__file__).resolve().parent.parent / "projects" / "2026-03-thermobags"
+        if not proj.exists():
+            self.skipTest("нет projects/2026-03-thermobags для теста")
+        transcripts = _load_transcripts_for_validation(proj)
+        self.assertIsInstance(transcripts, dict)
+        # Хотя бы один файл с непустым списком слов
+        self.assertTrue(any(len(v) > 0 for v in transcripts.values()))
+
+
 if __name__ == "__main__":
     unittest.main()
