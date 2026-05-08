@@ -296,6 +296,44 @@ JSON-массив (ничего лишнего, можно обернуть в `
 
 ---
 
+## 6.8. Смержи результаты в verified.json
+
+**Парсинг ответов агентов.** Из каждого агента — JSON-массив. Если вернулось обёрнуто в ```json ... ``` — сними обёртку и спарси. Объедини ответы всех fix-агентов в один словарь `fixed: dict[row_idx, result]`.
+
+**Обработка одной строки:**
+
+- Если `row_idx` есть в `fixed`: возьми `chosen_parts`, `confidence`, `note` из ответа.
+- Если `row_idx` нет в ответе агента (агент не вернул эту строку) — оставь её как была. Логируй в stdout: `⚠ row {row_idx}: агент не вернул фикс`.
+- Если у агента невалидный JSON — пропусти эту строку, оставь как была, логируй: `⚠ row {row_idx}: невалидный JSON от fix-агента`.
+
+**Запись.** Прочитай `verified.json` целиком, обнови **только** строки с `row_idx in fixed`:
+
+```python
+for row in verified["rows"]:
+    if row["row_idx"] in fixed:
+        f = fixed[row["row_idx"]]
+        row["chosen_parts"] = f["chosen_parts"]
+        row["confidence"] = f.get("confidence", "low")
+        row["note"] = f.get("note", "")
+```
+
+`speaker`, `col`, `text` — не трогай. Сохрани verified.json.
+
+**Контрольная точка в stdout:**
+
+```
+[Iter {iter}]: fix-агент вернул {len(fixed)}/{len(fix_payload)} строк
+```
+
+**Подготовка к следующей итерации:**
+
+```python
+prev_problem_set = problem_set
+iter += 1
+```
+
+И возврат к шагу 6.5 (новый прогон validate).
+
 ## 7. Выведи итоговую сводку
 
 ```
