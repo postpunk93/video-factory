@@ -40,12 +40,20 @@ Outputs: `{filename}.transcript.txt` (human-readable). With `--json`: also `{fil
 python _scripts/match_timecodes.py search <project_dir>    # Проход 1: поиск кандидатов → candidates.json
 python _scripts/match_timecodes.py snap <project_dir>       # Проход 3: snap to silence → обновляет script.csv
 python _scripts/match_timecodes.py compact <project_dir>    # Генерация words_compact.txt для агентов
+python _scripts/match_timecodes.py pack <project_dir>       # B1: фразовый pack транскриптов
+python _scripts/match_timecodes.py validate <project_dir>   # B2: проверка verified.json на overlap'ы
 ```
 
 Требует `ffmpeg` на PATH (для silencedetect). Транскрипты должны быть в `transcripts/*.transcript.json`.
 Проход 2 (агентная верификация) выполняется скиллом `/match-timecodes`.
 
 `candidates.json` содержит `rows[i]` с полями `parts[]` (каждая часть: `text + candidates[]`), `unmatched[]`, `mode` (`whole`/`split`), `status` (`single`/`multiple`/`multi_part`/`partial`/`not_found`). Составные цитаты автоматически определяются через `fuzzy_whole_match` (LCS) + split по предложениям. Агентная верификация пишет в `verified.json` поле `chosen_parts[]` — по одному выбору на каждую часть.
+
+`pack` создаёт `transcripts/{file}.packed.txt` (фразы с `[MM:SS.ss-MM:SS.ss]` и опционально speaker-тегом) и общий `transcripts/packed.md`. Разрыв фразы — на паузе ≥ 0.5s или смене speaker.
+
+`validate` детектирует две проблемы в `verified.json`: (1) word-overlap внутри одной строки (несколько партов с пересекающимися диапазонами) и (2) границы партов внутри слов (а не на word boundary). Отчёт пишется в `script/validation_report.json`. Exit code 1 если есть оверлапы.
+
+`cmd_snap` теперь вызывает validate как preflight: при наличии оверлапов snap блокируется (иначе запишет сломанный CSV).
 
 ### build_xml.py — генерация FCP 7 XML черновой сборки
 
