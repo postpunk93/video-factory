@@ -33,7 +33,7 @@ class TestFindInternalBreak(unittest.TestCase):
 
         def fake_silencedetect(path, t_start, t_end):
             if t_start == 38.99 and t_end == 40.58:
-                return [{"start": 40.40, "end": 40.50}]
+                return [{"start": 40.02, "end": 40.50}]  # 0.48с — значимая
             return []
 
         new_start, new_end = find_internal_break(
@@ -54,7 +54,7 @@ class TestFindInternalBreak(unittest.TestCase):
 
         def fake_silencedetect(path, t_start, t_end):
             if t_start == 105.0 and t_end == 107.5:
-                return [{"start": 106.0, "end": 106.2}]
+                return [{"start": 106.0, "end": 106.5}]  # 0.5с — значимая
             return []
 
         new_start, new_end = find_internal_break(
@@ -83,14 +83,14 @@ class TestFindInternalBreak(unittest.TestCase):
         self.assertEqual(new_end, 12.0)
 
     def test_multiple_internal_pauses_picks_last_for_start(self):
-        """Несколько внутренних пауз — для start берём последнюю."""
+        """Несколько внутренних значимых пауз — для start берём последнюю."""
         word_start = {"start": 0.0, "end": 3.0, "word": "X"}
 
         def fake(path, t_start, t_end):
             return [
-                {"start": 0.5, "end": 0.7},
-                {"start": 1.5, "end": 1.8},
-                {"start": 2.5, "end": 2.7},
+                {"start": 0.5, "end": 0.9},   # 0.4с
+                {"start": 1.5, "end": 1.9},   # 0.4с
+                {"start": 2.5, "end": 2.9},   # 0.4с
             ]
 
         new_start, _ = find_internal_break(
@@ -101,7 +101,24 @@ class TestFindInternalBreak(unittest.TestCase):
             current_end=3.0,
             silencedetect_fn=fake,
         )
-        self.assertAlmostEqual(new_start, 2.7)
+        self.assertAlmostEqual(new_start, 2.9)
+
+    def test_short_pauses_filtered_out(self):
+        """Микропаузы (<0.3с) от интонации/протяжки — игнорируются."""
+        word_end = {"start": 73.32, "end": 75.42, "word": "таксовал."}
+        new_start, new_end = find_internal_break(
+            file_path=Path("/fake.mov"),
+            word_at_start=None,
+            word_at_end=word_end,
+            current_start=70.0,
+            current_end=75.42,
+            silencedetect_fn=lambda *args, **kwargs: [
+                {"start": 73.50, "end": 73.60},  # 0.1с
+                {"start": 74.30, "end": 74.45},  # 0.15с
+            ],
+        )
+        self.assertEqual(new_start, 70.0)
+        self.assertEqual(new_end, 75.42)
 
 
 if __name__ == "__main__":

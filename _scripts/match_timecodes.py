@@ -844,6 +844,7 @@ def _get_speaker_files(project_dir: Path) -> tuple[set[str], set[str]]:
 # ─── Silence detection ─────────────────────────────────────────────────────
 
 SUSPICIOUS_WORD_DURATION_S = 1.0
+MIN_INTERNAL_GAP_S = 0.3  # минимальная пауза, считающаяся «между дублями»
 
 
 def find_internal_break(file_path, word_at_start, word_at_end,
@@ -853,8 +854,11 @@ def find_internal_break(file_path, word_at_start, word_at_end,
     внутри него и возвращает скорректированные (start, end). Иначе —
     оригинальные значения.
 
-    Для start: сдвигает к концу ПОСЛЕДНЕЙ паузы внутри first_word.
-    Для end:   сдвигает к началу ПЕРВОЙ паузы внутри last_word.
+    Для start: сдвигает к концу ПОСЛЕДНЕЙ значимой паузы внутри first_word.
+    Для end:   сдвигает к началу ПЕРВОЙ значимой паузы внутри last_word.
+
+    «Значимая» = длительность ≥ MIN_INTERNAL_GAP_S. Микропаузы между
+    слогами (интонация, протяжка) — игнорируются.
 
     silencedetect_fn — для DI в тестах. По умолчанию реальный ffmpeg.
     """
@@ -864,16 +868,23 @@ def find_internal_break(file_path, word_at_start, word_at_end,
     def is_suspicious(word):
         return word and (word["end"] - word["start"]) > SUSPICIOUS_WORD_DURATION_S
 
+    def filter_significant(silences):
+        return [s for s in silences if s["end"] - s["start"] >= MIN_INTERNAL_GAP_S]
+
     if silencedetect_fn is None:
         silencedetect_fn = lambda path, ts, te: detect_silences_in_range(path, ts, te)
 
     if is_suspicious(word_at_start):
-        silences = silencedetect_fn(file_path, word_at_start["start"], word_at_start["end"])
+        silences = filter_significant(
+            silencedetect_fn(file_path, word_at_start["start"], word_at_start["end"])
+        )
         if silences:
             new_start = silences[-1]["end"]
 
     if is_suspicious(word_at_end):
-        silences = silencedetect_fn(file_path, word_at_end["start"], word_at_end["end"])
+        silences = filter_significant(
+            silencedetect_fn(file_path, word_at_end["start"], word_at_end["end"])
+        )
         if silences:
             new_end = silences[0]["start"]
 
@@ -1150,6 +1161,7 @@ def cmd_snap(project_dir: Path) -> None:
 
     # Детектим тишину для каждого файла
     silence_cache: dict[str, list[dict]] = {}
+    video_path_cache: dict[str, Path] = {}
     for fname in sorted(files_needed):
         video_path = None
         for d in raw_dirs:
@@ -1160,6 +1172,7 @@ def cmd_snap(project_dir: Path) -> None:
         if not video_path:
             print(f"  Внимание: файл {fname} не найден, пропускаем")
             continue
+        video_path_cache[fname] = video_path
         print(f"  Детект тишины: {fname}...")
         silence_cache[fname] = detect_silences(video_path)
         print(f"    Найдено пауз: {len(silence_cache[fname])}")
@@ -1205,9 +1218,40 @@ def cmd_snap(project_dir: Path) -> None:
             min_start = prev["end"] if prev else 0.0
             max_end = nxt["start"] if nxt else float("inf")
 
+            words = words_cache.get(fname, [])
+
+            # Merged-word fix: если start/end попали в подозрительно длинное
+            # слово (Whisper схлопнул дубли), ищем внутреннюю паузу.
+            video_path = video_path_cache.get(fname)
+            if video_path:
+                word_at_start = next(
+                    (w for w in words
+                     if w.get("start", 0) - 0.01 <= p["start"] <= w.get("end", 0) + 0.01),
+                    None,
+                )
+                word_at_end = next(
+                    (w for w in words
+                     if w.get("start", 0) - 0.01 <= p["end"] <= w.get("end", 0) + 0.01),
+                    None,
+                )
+                if word_at_start or word_at_end:
+                    new_start, new_end = find_internal_break(
+                        file_path=video_path,
+                        word_at_start=word_at_start,
+                        word_at_end=word_at_end,
+                        current_start=p["start"],
+                        current_end=p["end"],
+                    )
+                    if new_start != p["start"] or new_end != p["end"]:
+                        print(f"  ↻ row {row['row_idx']}: merged-word fix "
+                              f"start={p['start']:.2f}→{new_start:.2f} "
+                              f"end={p['end']:.2f}→{new_end:.2f}")
+                        p = dict(p)
+                        p["start"] = new_start
+                        p["end"] = new_end
+
             # Дополнительно ограничиваем word-границами из транскрипта:
             # snap не должен заходить внутрь предыдущего/следующего слова.
-            words = words_cache.get(fname, [])
             prev_word_end = max(
                 (w["end"] for w in words if w.get("end", 0) <= p["start"] + 0.01),
                 default=0.0,
