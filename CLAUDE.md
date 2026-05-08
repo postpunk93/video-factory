@@ -88,6 +88,8 @@ python _scripts/build_xml.py <project_dir> [--davinci]
 
 Проход 2 агентной верификации. Запускается после `match_timecodes.py search`.
 
+Скилл сам прогоняет `validate` после агентной верификации и за 1–3 итерации точечно чинит проблемные строки fix-агентом. Если за 3 итерации остались проблемы — печатает их, snap позже заблокируется preflight'ом.
+
 ## Conventions
 
 - **Project folders**: `YYYY-MM-description` under `projects/`, structured by content type:
