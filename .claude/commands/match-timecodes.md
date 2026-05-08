@@ -147,6 +147,72 @@ INDEX    START    END WORD
 
 Если агент вернул старый формат с `chosen` (single dict) — нормализуй в `chosen_parts: [chosen]`.
 
+## 6.5. Validate verified.json и fix-loop
+
+Запусти автоматический цикл проверки и точечной починки. Лимит — 3 итерации; после — эскалация.
+
+**Инициализация:**
+
+```python
+iter = 0
+prev_problem_set = None
+```
+
+**На каждой итерации (`iter` 1..3):**
+
+```bash
+python _scripts/match_timecodes.py validate {project_dir}
+```
+
+Команда пишет `{project_dir}/script/validation_report.json`:
+```json
+{
+  "overlaps": [
+    {"row_idx": 51, "file": "X.mov", "part_a": 0, "part_b": 1,
+     "intersection_s": 0.10}
+  ],
+  "within_word": [
+    {"row_idx": 8, "part_idx": 0, "edge": "end",
+     "word": "курьерах", "word_start": 187.55, "word_end": 190.14,
+     "part_value": 189.05}
+  ],
+  "thresholds": {"word_tol_ms": 50, "min_overlap_ms": 50}
+}
+```
+
+Прочитай `validation_report.json`, собери:
+
+```python
+problem_set = set(o["row_idx"] for o in overlaps) \
+            | set(w["row_idx"] for w in within_word)
+```
+
+**Стоп-условия:**
+
+1. `problem_set` пустой — break, перейти к шагу 7. Validate чисто.
+2. `iter == 3` — break, эскалировать (см. ниже).
+3. `prev_problem_set is not None and len(problem_set) >= len(prev_problem_set)` — множество не уменьшилось → break, эскалировать (защита от тупика).
+
+Если ни одно стоп-условие не сработало:
+
+```
+[Iter {iter}]: validate → {len(overlaps)} оверлапов + {len(within_word)} within-word → {len(problem_set)} проблемных строк
+```
+
+— и переходим к шагу 6.6.
+
+**Эскалация** (печатается в stdout, скилл идёт к шагу 7):
+
+```
+⚠ После {iter} итераций фикса осталось {len(problem_set)} проблем:
+  row 51: overlap parts 0+1 в X.mov (0.10s)
+  row 8:  within-word 'курьерах' (end 189.05s в [187.55, 190.14])
+  ...
+
+Следующий шаг — переверифицировать вручную или принять как есть.
+script.csv не будет сгенерирован snap'ом, пока есть оверлапы.
+```
+
 ## 7. Выведи итоговую сводку
 
 ```
