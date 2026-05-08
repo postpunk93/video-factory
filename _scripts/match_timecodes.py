@@ -8,6 +8,7 @@
 """
 
 import argparse
+import bisect
 import csv
 import json
 import re
@@ -107,12 +108,18 @@ def render_packed_markdown(phrases: list[dict]) -> str:
 
 # ─── Текстовый индекс ──────────────────────────────────────────────────────
 
-def build_text_index(words: list[dict]) -> tuple[str, list[int]]:
-    """Собирает полный нормализованный текст и карту char→word_idx."""
+def build_text_index(words: list[dict],
+                     norm_words: list[str] | None = None) -> tuple[str, list[int]]:
+    """Собирает полный нормализованный текст и карту char→word_idx.
+
+    norm_words: список нормализованных строк (один к одному с words). Если
+    None — нормализует на месте (медленнее, оставлено для обратной совместимости).
+    """
+    if norm_words is None:
+        norm_words = [normalize(w.get("word", "")) for w in words]
     parts = []
     char_map = []
-    for i, w in enumerate(words):
-        norm = normalize(w["word"])
+    for i, norm in enumerate(norm_words):
         if not norm:
             continue
         if parts:
@@ -603,35 +610,45 @@ def detect_within_word(rows: list[dict], transcripts: dict[str, list[dict]],
     tol_s = word_tol_ms / 1000.0
     out: list[dict] = []
 
+    # Кеш на файл: отсортированный массив start'ов и параллельный список слов.
+    sorted_cache: dict[str, tuple[list[float], list[dict]]] = {}
+    for fname, words in transcripts.items():
+        clean = [w for w in words
+                 if w.get("start") is not None and w.get("end") is not None]
+        clean.sort(key=lambda w: w["start"])
+        starts = [w["start"] for w in clean]
+        sorted_cache[fname] = (starts, clean)
+
     for row in rows:
         parts = row.get("chosen_parts") or []
         for pidx, p in enumerate(parts):
-            words = transcripts.get(p.get("file"))
-            if not words:
+            cache = sorted_cache.get(p.get("file"))
+            if not cache:
                 continue
+            starts, clean = cache
             for edge in ("start", "end"):
                 t = p.get(edge)
                 if t is None:
                     continue
-                for w in words:
-                    ws, we = w.get("start"), w.get("end")
-                    if ws is None or we is None:
-                        continue
-                    if not (ws < t < we):
-                        continue
-                    # внутри слова — проверяем близость к границам
-                    if (t - ws) <= tol_s or (we - t) <= tol_s:
-                        break  # достаточно близко, не флагаем
-                    out.append({
-                        "row_idx": row["row_idx"],
-                        "part_idx": pidx,
-                        "edge": edge,
-                        "word": w.get("word"),
-                        "word_start": ws,
-                        "word_end": we,
-                        "part_value": t,
-                    })
-                    break  # одно совпадение слова — выходим
+                # Кандидат: последнее слово с start <= t.
+                idx = bisect.bisect_right(starts, t) - 1
+                if idx < 0:
+                    continue
+                w = clean[idx]
+                ws, we = w["start"], w["end"]
+                if not (ws < t < we):
+                    continue
+                if (t - ws) <= tol_s or (we - t) <= tol_s:
+                    continue
+                out.append({
+                    "row_idx": row["row_idx"],
+                    "part_idx": pidx,
+                    "edge": edge,
+                    "word": w.get("word"),
+                    "word_start": ws,
+                    "word_end": we,
+                    "part_value": t,
+                })
     return out
 
 
@@ -789,8 +806,8 @@ def load_transcripts(project_dir: Path) -> dict:
             continue
 
         source = data.get("source", jp.stem.replace(".transcript", ""))
-        full_text, char_map = build_text_index(all_words)
         norm_words = [normalize(w.get("word", "")) for w in all_words]
+        full_text, char_map = build_text_index(all_words, norm_words)
 
         result[source] = {
             "words": all_words,

@@ -9,8 +9,10 @@
 """
 
 import argparse
+import concurrent.futures
 import csv
 import json
+import os
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -111,34 +113,44 @@ def scan_project(project_dir: Path) -> tuple[dict, dict, dict]:
     print(f"  Voiceover: {voiceover_dir.relative_to(project_dir)}")
     print(f"  Interviews: {interviews_dir.relative_to(project_dir)}")
 
-    first_interview_info = None
-
-    # Voiceover files
-    voiceover_count = 0
+    # Соберём список (kind, path) всех медиа
+    todo: list[tuple[str, Path]] = []
     if voiceover_dir.exists():
         for f in sorted(voiceover_dir.iterdir()):
             if f.suffix.lower() in MEDIA_EXTENSIONS:
-                voiceover_count += 1
-                if voiceover_count > 1:
-                    print(f"  WARN: несколько voiceover-файлов, используется последний: {f.name}")
-                print(f"  Сканирую: {f.name}")
-                info = probe_file(f)
-                key = "voiceover"
-                files[key] = info
-                filename_to_key[f.name] = key
-
-    # Interview files
+                todo.append(("voiceover", f))
     if interviews_dir.exists():
         for f in sorted(interviews_dir.iterdir()):
             if f.suffix.lower() in MEDIA_EXTENSIONS:
-                print(f"  Сканирую: {f.name}")
-                info = probe_file(f)
-                key = f.stem.lower()
-                files[key] = info
-                filename_to_key[f.name] = key
+                todo.append(("interview", f))
 
-                if first_interview_info is None:
-                    first_interview_info = info
+    # Параллельный probe (subprocess IO-bound, треды безопасны)
+    if todo:
+        print(f"  Сканирую {len(todo)} файлов параллельно...")
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=os.cpu_count() or 4
+        ) as ex:
+            infos = list(ex.map(lambda p: probe_file(p[1]), todo))
+    else:
+        infos = []
+
+    first_interview_info = None
+    voiceover_count = 0
+
+    for (kind, f), info in zip(todo, infos):
+        if kind == "voiceover":
+            voiceover_count += 1
+            if voiceover_count > 1:
+                print(f"  WARN: несколько voiceover-файлов, используется последний: {f.name}")
+            print(f"  Сканирую: {f.name}")
+            key = "voiceover"
+        else:
+            print(f"  Сканирую: {f.name}")
+            key = f.stem.lower()
+            if first_interview_info is None:
+                first_interview_info = info
+        files[key] = info
+        filename_to_key[f.name] = key
 
     # Определяем параметры секвенции из первого интервью
     if first_interview_info:
