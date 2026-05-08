@@ -843,6 +843,43 @@ def _get_speaker_files(project_dir: Path) -> tuple[set[str], set[str]]:
 
 # ─── Silence detection ─────────────────────────────────────────────────────
 
+SUSPICIOUS_WORD_DURATION_S = 1.0
+
+
+def find_internal_break(file_path, word_at_start, word_at_end,
+                         current_start, current_end,
+                         silencedetect_fn=None):
+    """Если слово на границе клипа подозрительно длинное — ищет паузу
+    внутри него и возвращает скорректированные (start, end). Иначе —
+    оригинальные значения.
+
+    Для start: сдвигает к концу ПОСЛЕДНЕЙ паузы внутри first_word.
+    Для end:   сдвигает к началу ПЕРВОЙ паузы внутри last_word.
+
+    silencedetect_fn — для DI в тестах. По умолчанию реальный ffmpeg.
+    """
+    new_start = current_start
+    new_end = current_end
+
+    def is_suspicious(word):
+        return word and (word["end"] - word["start"]) > SUSPICIOUS_WORD_DURATION_S
+
+    if silencedetect_fn is None:
+        return new_start, new_end
+
+    if is_suspicious(word_at_start):
+        silences = silencedetect_fn(file_path, word_at_start["start"], word_at_start["end"])
+        if silences:
+            new_start = silences[-1]["end"]
+
+    if is_suspicious(word_at_end):
+        silences = silencedetect_fn(file_path, word_at_end["start"], word_at_end["end"])
+        if silences:
+            new_end = silences[0]["start"]
+
+    return new_start, new_end
+
+
 def detect_silences(video_path: Path) -> list[dict]:
     """Запускает ffmpeg silencedetect, возвращает [{start, end}, ...]."""
     cmd = [
@@ -1087,6 +1124,9 @@ def cmd_snap(project_dir: Path) -> None:
         silence_cache[fname] = detect_silences(video_path)
         print(f"    Найдено пауз: {len(silence_cache[fname])}")
 
+    # Загружаем word-границы — нужны чтоб snap не ушёл внутрь соседнего слова.
+    words_cache = _load_transcripts_for_validation(project_dir)
+
     # Загружаем CSV для записи
     csv_path = project_dir / "script" / "script.csv"
     with open(csv_path, "r", encoding="utf-8") as f:
@@ -1124,6 +1164,20 @@ def cmd_snap(project_dir: Path) -> None:
 
             min_start = prev["end"] if prev else 0.0
             max_end = nxt["start"] if nxt else float("inf")
+
+            # Дополнительно ограничиваем word-границами из транскрипта:
+            # snap не должен заходить внутрь предыдущего/следующего слова.
+            words = words_cache.get(fname, [])
+            prev_word_end = max(
+                (w["end"] for w in words if w.get("end", 0) <= p["start"] + 0.01),
+                default=0.0,
+            )
+            next_word_start = min(
+                (w["start"] for w in words if w.get("start", float("inf")) >= p["end"] - 0.01),
+                default=float("inf"),
+            )
+            min_start = max(min_start, prev_word_end)
+            max_end = min(max_end, next_word_start)
 
             silences = silence_cache.get(fname, [])
             ss, se = snap_to_silence(p["start"], p["end"], silences,
