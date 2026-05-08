@@ -1035,6 +1035,22 @@ def cmd_snap(project_dir: Path) -> None:
     with open(verified_path, "r", encoding="utf-8") as f:
         verified = json.load(f)
 
+    # Preflight (B2): не snap-нем, если в verified.json уже есть word-overlap'ы.
+    # Иначе snap запишет в CSV сломанные строки, которые потом дадут повтор
+    # аудио на таймлайне.
+    rows_for_check = [{
+        "row_idx": r["row_idx"],
+        "chosen_parts": _get_chosen_parts(r),
+    } for r in verified["rows"]]
+    overlaps = detect_overlaps(rows_for_check, min_overlap_ms=50)
+    if overlaps:
+        print("❌ Snap отменён: в verified.json есть word-overlap'ы.")
+        print("   Запусти: python _scripts/match_timecodes.py validate <project>")
+        for o in overlaps:
+            print(f"   row {o['row_idx']} {o['file']}: парты {o['part_a']}+{o['part_b']} "
+                  f"пересечение {o['intersection_s']}s")
+        sys.exit(1)
+
     # Собираем уникальные файлы из всех частей всех строк.
     files_needed = set()
     for row in verified["rows"]:
