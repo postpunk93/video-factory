@@ -59,5 +59,24 @@ class TestPackWordsIntoPhrases(unittest.TestCase):
         self.assertEqual(pack_words_into_phrases([], silence_threshold=0.5), [])
 
 
+class TestRenderPackedMarkdown(unittest.TestCase):
+    def test_format_with_speaker(self):
+        from match_timecodes import render_packed_markdown
+        phrases = [
+            {"start": 1.5, "end": 3.7, "text": "пример фразы", "speaker": "SPEAKER_00"},
+        ]
+        md = render_packed_markdown(phrases)
+        self.assertIn("[00:01.50-00:03.70] S00 пример фразы", md)
+
+    def test_format_without_speaker(self):
+        from match_timecodes import render_packed_markdown
+        phrases = [
+            {"start": 0.0, "end": 1.0, "text": "без спикера", "speaker": None},
+        ]
+        md = render_packed_markdown(phrases)
+        self.assertIn("[00:00.00-00:01.00] без спикера", md)
+        self.assertNotIn(" S", md.replace(":", ""))  # никаких speaker-тегов
+
+
 if __name__ == "__main__":
     unittest.main()

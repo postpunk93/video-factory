@@ -102,6 +102,20 @@ def pack_words_into_phrases(words: list[dict], silence_threshold: float = 0.5) -
     return phrases
 
 
+def render_packed_markdown(phrases: list[dict]) -> str:
+    """Рендерит фразы в markdown-строки `[MM:SS.ss-MM:SS.ss] [Sxx] текст`."""
+    lines: list[str] = []
+    for p in phrases:
+        spk = p.get("speaker")
+        if spk:
+            spk_short = str(spk).replace("SPEAKER_", "S")
+            tag = f" {spk_short}"
+        else:
+            tag = ""
+        lines.append(f"[{fmt_tc(p['start'])}-{fmt_tc(p['end'])}]{tag} {p['text']}")
+    return "\n".join(lines)
+
+
 # ─── Текстовый индекс ──────────────────────────────────────────────────────
 
 def build_text_index(words: list[dict]) -> tuple[str, list[int]]:
@@ -1031,6 +1045,46 @@ def cmd_compact(project_dir: Path) -> None:
     print("\nГотово.")
 
 
+def cmd_pack(project_dir: Path, silence_threshold: float = 0.5) -> None:
+    """Создаёт packed.md / *.packed.txt — фразовое представление транскриптов."""
+    print(f"=== Pack транскриптов: {project_dir.name} ===\n")
+
+    tr_dir = project_dir / "transcripts"
+    if not tr_dir.exists():
+        print(f"Ошибка: не найдена папка {tr_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    json_files = sorted(tr_dir.glob("*.transcript.json"))
+    if not json_files:
+        print(f"Ошибка: нет *.transcript.json в {tr_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    all_blocks: list[str] = []
+    for jp in json_files:
+        with open(jp, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        words = []
+        for seg in data.get("segments", []):
+            words.extend(seg.get("words", []))
+        phrases = pack_words_into_phrases(words, silence_threshold=silence_threshold)
+        md = render_packed_markdown(phrases)
+
+        per_file_path = tr_dir / jp.name.replace(".transcript.json", ".packed.txt")
+        with open(per_file_path, "w", encoding="utf-8") as f:
+            f.write(md + "\n")
+
+        header = f"## {jp.name.replace('.transcript.json', '')}  ({len(phrases)} фраз)"
+        all_blocks.append(header + "\n\n" + md + "\n")
+        print(f"  {per_file_path.name}: {len(phrases)} фраз")
+
+    index_path = tr_dir / "packed.md"
+    with open(index_path, "w", encoding="utf-8") as f:
+        f.write(f"# Packed транскрипты\n\n")
+        f.write(f"Фразы, разрыв на тишине ≥ {silence_threshold:.1f}s или смене спикера.\n\n")
+        f.write("\n".join(all_blocks))
+    print(f"\nИндекс: {index_path}")
+
+
 # ─── main ───────────────────────────────────────────────────────────────────
 
 def main():
@@ -1048,6 +1102,11 @@ def main():
     p_compact = subparsers.add_parser("compact", help="Генерация words_compact.txt")
     p_compact.add_argument("project_dir", type=Path, help="Путь к папке проекта")
 
+    p_pack = subparsers.add_parser("pack", help="B1: pack-формат транскриптов (фразы + [start-end])")
+    p_pack.add_argument("project_dir", type=Path, help="Путь к папке проекта")
+    p_pack.add_argument("--silence-threshold", type=float, default=0.5,
+                        help="Порог паузы для разрыва фразы (default: 0.5s)")
+
     args = parser.parse_args()
 
     project_dir = args.project_dir.resolve()
@@ -1061,6 +1120,8 @@ def main():
         cmd_snap(project_dir)
     elif args.command == "compact":
         cmd_compact(project_dir)
+    elif args.command == "pack":
+        cmd_pack(project_dir, silence_threshold=args.silence_threshold)
 
 
 if __name__ == "__main__":
