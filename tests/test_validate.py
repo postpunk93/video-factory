@@ -73,5 +73,57 @@ class TestDetectOverlaps(unittest.TestCase):
         self.assertEqual(detect_overlaps(rows, min_overlap_ms=50), [])
 
 
+class TestDetectWithinWord(unittest.TestCase):
+    def _words(self):
+        # Транскрипт: 3 слова с известными границами
+        return [
+            {"word": "первое", "start": 0.0, "end": 0.5},
+            {"word": "второе", "start": 0.7, "end": 1.2},
+            {"word": "третье", "start": 1.5, "end": 2.0},
+        ]
+
+    def test_part_end_inside_word(self):
+        """end парта попадает в середину слова → конфликт."""
+        from match_timecodes import detect_within_word
+        rows = [{
+            "row_idx": 22,
+            "chosen_parts": [{"file": "a.mov", "start": 0.0, "end": 0.9}],
+        }]
+        transcripts = {"a.mov": self._words()}
+        flags = detect_within_word(rows, transcripts, word_tol_ms=50)
+        self.assertEqual(len(flags), 1)
+        self.assertEqual(flags[0]["edge"], "end")
+        self.assertEqual(flags[0]["word"], "второе")
+
+    def test_part_start_on_boundary(self):
+        """start парта на границе слова (в пределах допуска) → ок."""
+        from match_timecodes import detect_within_word
+        rows = [{
+            "row_idx": 1,
+            "chosen_parts": [{"file": "a.mov", "start": 0.03, "end": 0.5}],
+        }]  # 30ms от 0.0 — внутри ±50ms допуска
+        transcripts = {"a.mov": self._words()}
+        self.assertEqual(detect_within_word(rows, transcripts, word_tol_ms=50), [])
+
+    def test_part_in_silence(self):
+        """Граница парта в паузе между словами → ок."""
+        from match_timecodes import detect_within_word
+        rows = [{
+            "row_idx": 1,
+            "chosen_parts": [{"file": "a.mov", "start": 0.6, "end": 1.35}],
+        }]  # обе границы в паузах
+        transcripts = {"a.mov": self._words()}
+        self.assertEqual(detect_within_word(rows, transcripts, word_tol_ms=50), [])
+
+    def test_missing_transcript(self):
+        """Нет транскрипта для file → пропускаем (не падаем)."""
+        from match_timecodes import detect_within_word
+        rows = [{
+            "row_idx": 1,
+            "chosen_parts": [{"file": "missing.mov", "start": 0.0, "end": 5.0}],
+        }]
+        self.assertEqual(detect_within_word(rows, {}, word_tol_ms=50), [])
+
+
 if __name__ == "__main__":
     unittest.main()
