@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""transcribe.py — транскрибация с определением спикеров (диаризация)."""
+"""transcribe.py — транскрибация (опционально с диаризацией спикеров)."""
 
 import argparse
 import gc
@@ -35,16 +35,18 @@ ALL_EXTENSIONS = VIDEO_EXTENSIONS | AUDIO_EXTENSIONS
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Транскрибация с определением спикеров (диаризация)."
+        description="Транскрибация (опционально с диаризацией спикеров)."
     )
     parser.add_argument("input", help="Аудио/видеофайл или папка")
+    parser.add_argument("--diarize", action="store_true",
+                        help="Включить диаризацию (требует HF_TOKEN). По умолчанию выкл.")
     parser.add_argument("--speakers", type=int, default=2,
-                        help="Ожидаемое число спикеров (default: 2)")
+                        help="Ожидаемое число спикеров — используется только с --diarize (default: 2)")
     parser.add_argument("--model", default="large-v3",
                         help="Модель Whisper (default: large-v3)")
     parser.add_argument("--output", help="Папка для результатов")
     parser.add_argument("--hf-token", default=None,
-                        help="HuggingFace токен (или переменная HF_TOKEN)")
+                        help="HuggingFace токен (или переменная HF_TOKEN). Нужен только при --diarize.")
     parser.add_argument("--json", action="store_true",
                         help="Дополнительно сохранить JSON с word-level таймкодами")
     return parser.parse_args()
@@ -254,19 +256,24 @@ def format_time(seconds):
 
 
 def save_txt(blocks, speaker_map, source_name, duration, output_path):
-    """Сохранить расшифровку в TXT."""
+    """Сохранить расшифровку в TXT. Если speaker_map пустой — без префиксов спикеров."""
+    with_speakers = bool(speaker_map)
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(f"Расшифровка: {source_name}\n")
         f.write(f"Дата: {date.today().isoformat()}\n")
-        f.write(f"Спикеры: {len(speaker_map)}\n")
+        if with_speakers:
+            f.write(f"Спикеры: {len(speaker_map)}\n")
         f.write(f"Длительность: {format_time(duration)}\n")
         f.write(f"\n{'─' * 40}\n")
 
         for block in blocks:
-            spk = speaker_map.get(block["speaker"], block["speaker"])
             t1 = format_time(block["start"])
             t2 = format_time(block["end"])
-            f.write(f"\n[{t1} → {t2}] {spk}:\n")
+            if with_speakers:
+                spk = speaker_map.get(block["speaker"], block["speaker"])
+                f.write(f"\n[{t1} → {t2}] {spk}:\n")
+            else:
+                f.write(f"\n[{t1} → {t2}]\n")
             f.write(f"{block['text'].strip()}\n")
 
         f.write(f"\n{'─' * 40}\n")
@@ -275,18 +282,19 @@ def save_txt(blocks, speaker_map, source_name, duration, output_path):
 
 
 def save_json(blocks, speaker_map, source_name, duration, output_path):
-    """Сохранить расшифровку в JSON."""
+    """Сохранить расшифровку в JSON. Если speaker_map пустой — без полей спикеров."""
+    with_speakers = bool(speaker_map)
     data = {
         "source": source_name,
         "date": date.today().isoformat(),
         "duration": round(duration, 2),
-        "speakers_count": len(speaker_map),
         "segments": [],
     }
+    if with_speakers:
+        data["speakers_count"] = len(speaker_map)
 
     for block in blocks:
         seg = {
-            "speaker": speaker_map.get(block["speaker"], block["speaker"]),
             "start": round(block["start"], 2),
             "end": round(block["end"], 2),
             "text": block["text"].strip(),
@@ -300,6 +308,8 @@ def save_json(blocks, speaker_map, source_name, duration, output_path):
                 if "word" in w
             ],
         }
+        if with_speakers:
+            seg["speaker"] = speaker_map.get(block["speaker"], block["speaker"])
         data["segments"].append(seg)
 
     with open(output_path, "w", encoding="utf-8") as f:
@@ -332,7 +342,7 @@ def get_output_dir(filepath, output_arg):
 
 
 def process_file(filepath, args, device, compute_type, token):
-    """Обработать один файл: транскрибация → диаризация → вывод."""
+    """Обработать один файл: транскрибация → (опц. диаризация) → вывод."""
     print(f"\n{'─' * 50}")
     print(f"Файл: {filepath.name}")
     print(f"{'─' * 50}")
@@ -347,13 +357,26 @@ def process_file(filepath, args, device, compute_type, token):
     # Фаза 1: транскрибация
     audio, result = transcribe(filepath, args.model, device, compute_type)
 
-    # Фаза 2: диаризация
-    result, speakers = diarize(audio, result, token, args.speakers, device)
+    # Фаза 2: диаризация (опционально)
+    if args.diarize:
+        result, speakers = diarize(audio, result, token, args.speakers, device)
+        speaker_map = build_speaker_map(speakers)
+        blocks = merge_segments(result["segments"])
+    else:
+        speakers = []
+        speaker_map = {}
+        blocks = [
+            {
+                "speaker": "?",
+                "start": seg.get("start", 0.0),
+                "end": seg.get("end", 0.0),
+                "text": seg.get("text", ""),
+                "words": list(seg.get("words", [])),
+            }
+            for seg in result["segments"]
+        ]
 
     # Фаза 3: форматирование и вывод
-    speaker_map = build_speaker_map(speakers)
-    blocks = merge_segments(result["segments"])
-
     out_dir = get_output_dir(filepath, args.output)
     stem = filepath.stem
 
@@ -364,12 +387,15 @@ def process_file(filepath, args, device, compute_type, token):
         save_json(blocks, speaker_map, filepath.name, duration,
                   out_dir / f"{stem}.transcript.json")
 
-    print(f"\nГотово: {len(blocks)} блоков, {len(speakers)} спикеров")
+    if args.diarize:
+        print(f"\nГотово: {len(blocks)} блоков, {len(speakers)} спикеров")
+    else:
+        print(f"\nГотово: {len(blocks)} блоков (без диаризации)")
 
 
 def main():
     args = parse_args()
-    token = get_hf_token(args)
+    token = get_hf_token(args) if args.diarize else None
     check_ffprobe()
 
     files = collect_files(args.input)
@@ -377,7 +403,10 @@ def main():
         print("Нет файлов для обработки.")
         sys.exit(1)
 
-    print(f"Файлов: {len(files)}, спикеров: {args.speakers}")
+    if args.diarize:
+        print(f"Файлов: {len(files)}, диаризация: вкл (спикеров: {args.speakers})")
+    else:
+        print(f"Файлов: {len(files)}, диаризация: выкл")
 
     device, compute_type = detect_device()
 

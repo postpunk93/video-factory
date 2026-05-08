@@ -34,7 +34,7 @@
       ├─ npm install -g @anthropic-ai/claude-code
       ├─ uv venv .venv && uv pip install -r requirements.txt
       ├─ прогрев моделей (faster-whisper large-v3 + whisperx aligner)
-      └─ проверка .env (HF_TOKEN + согласие с лицензиями pyannote)
+      └─ опц. проверка .env (HF_TOKEN для pyannote — нужен только под --diarize)
 
 [2] ПОДГОТОВКА (каждый проект)
     Claude Code: «создай структуру для нового проекта 2026-05-myvideo»
@@ -116,7 +116,7 @@ factory-employee/                   ← отдельный приватный р
 6. **uv:** `brew install uv`.
 7. **venv + deps:** `uv venv .venv && uv pip install -r requirements.txt`.
 8. **Прогрев моделей:** скачать `large-v3` для faster-whisper и whisperx-aligner в `models/` (~3 GB). Если уже есть — пропустить.
-9. **HF_TOKEN:** проверить `.env`. Если нет — открыть README на разделе про HuggingFace и завершиться. После создания `.env` повторный setup доходит до конца. Валидация токена: `huggingface_hub.HfApi().whoami()` + тестовый запрос на `pyannote/speaker-diarization-3.1`. Если нет согласия с лицензией — печать «зайди на <url>, нажми Agree, перезапусти setup».
+9. **HF_TOKEN (опционально):** проверить `.env`. Если нет — печать «диаризация отключена, это норма для дефолтного пайплайна» и идти дальше (setup НЕ валится). Если есть — валидация токена: `huggingface_hub.HfApi().whoami()` + тестовый запрос на `pyannote/speaker-diarization-3.1` и `pyannote/segmentation-3.0`. На любой ошибке — warning + продолжаем (setup не валится). Токен нужен только когда сотрудник вручную запустит `transcribe.py --diarize`.
 10. **Финал:** `setup_complete.flag`, печать next steps.
 
 **Логи:** `setup.log` в корне репо.
@@ -125,12 +125,12 @@ factory-employee/                   ← отдельный приватный р
 
 **Аргументы:** `./prepare.command projects/<имя>`. Двойной клик из Finder → интерактивный prompt со списком папок в `projects/`, сотрудник вводит цифру.
 
-1. **Sanity:** проверить `setup_complete.flag`, `.venv`, `.env` с `HF_TOKEN`, `projects/<имя>/raw/`, `projects/<имя>/script/script.csv`.
-2. **Activate:** `source .venv/bin/activate`, экспорт `HF_TOKEN`.
+1. **Sanity:** проверить `setup_complete.flag`, `.venv`, `projects/<имя>/raw/`, `projects/<имя>/script/script.csv`. `.env` опционален — нужен только под `transcribe.py --diarize`.
+2. **Activate:** `source .venv/bin/activate`. Если `.env` есть — экспорт `HF_TOKEN`, иначе пропустить.
 3. **ETA-предупреждение:** `ffprobe` по всем `raw/*` → суммарная длительность → формула `~0.7×duration` cut_pauses + `~0.3×duration` transcribe на M-чипе. Печать «примерно N часов».
 4. **cut_pauses войсовера:** `python _scripts/cut_pauses.py projects/<имя>/raw/voiceover --output projects/<имя>/cuts/voiceover --profile slava`. Идемпотентно по существующим `*_clean.mp4`.
 5. **cut_pauses интервью:** то же с `--profile hero`.
-6. **transcribe:** `python _scripts/transcribe.py projects/<имя>/cuts --speakers 2 --json --output projects/<имя>/transcripts`. Идемпотентно.
+6. **transcribe:** `python _scripts/transcribe.py projects/<имя>/cuts --json --output projects/<имя>/transcripts`. Без диаризации — match_timecodes её не использует. Идемпотентно.
 7. **match_timecodes search:** `python _scripts/match_timecodes.py search projects/<имя>` → `candidates.json`.
 8. **match_timecodes compact:** `python _scripts/match_timecodes.py compact projects/<имя>` → `words_compact.txt`.
 9. **Финал:** «Подготовка готова. Теперь в Claude Code: `/match-timecodes projects/<имя>`. После — двойной клик assemble.command.»
@@ -162,7 +162,9 @@ factory-employee/                   ← отдельный приватный р
 
 **Триггер:** в начале `prepare.command` тихий `git fetch` + предупреждение, если `origin/main` ушёл вперёд. Не блокирует — сотрудник сам решает.
 
-## HF_TOKEN
+## HF_TOKEN (опциональный поток)
+
+Нужен только под `transcribe.py --diarize`. В дефолтном пайплайне диаризация выключена, и токен не требуется. Поэтому setup НЕ валится при его отсутствии — только пишет warning.
 
 Раздел в `README.md` + 4–5 скриншотов в `docs/setup/hf_token/`:
 

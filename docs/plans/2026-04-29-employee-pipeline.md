@@ -77,7 +77,11 @@ projects/
 **Step 3: Написать `.env.example`**
 
 ```bash
-# HuggingFace token для pyannote (диаризация в transcribe.py).
+# (Опционально) HuggingFace token для pyannote — нужен ТОЛЬКО если запускаешь
+# transcribe.py с флагом --diarize (по умолчанию диаризация выключена и не
+# используется в основном пайплайне). Если флаг тебе не нужен — оставь как есть
+# или удали .env.
+#
 # Получи на https://huggingface.co/settings/tokens (read access).
 # Перед этим зайди на pyannote/segmentation-3.0 и pyannote/speaker-diarization-3.1,
 # нажми "Agree and access repository" на каждом.
@@ -291,7 +295,7 @@ fi
 echo "✓ Apple Silicon"
 
 # Очистить флаг успешного завершения — будет создан в самом конце.
-# Иначе предыдущий успешный запуск + текущий аборт на HF_TOKEN оставит stale flag,
+# Иначе предыдущий успешный запуск + текущий аборт оставит stale flag,
 # и prepare.command поверит, что setup ok.
 rm -f setup_complete.flag
 
@@ -389,71 +393,47 @@ import whisperx
 print("✓ whisperx (модели скачаются при первом transcribe)")
 PY
 
-log_step "Проверка .env (HF_TOKEN)"
+log_step "Проверка .env (HF_TOKEN — опционально)"
+# HF_TOKEN нужен только если будешь запускать transcribe.py с --diarize
+# (по умолчанию диаризация выключена). Без токена setup пройдёт, просто
+# пропустим валидацию — пайплайн от этого не сломается.
+
 if [ ! -f ".env" ]; then
-    echo ""
-    echo "НУЖНО: создай .env с HF_TOKEN."
-    echo ""
-    echo "Шаги:"
-    echo "  1. Зарегистрируйся на https://huggingface.co"
-    echo "  2. Зайди на https://huggingface.co/pyannote/segmentation-3.0 → Agree"
-    echo "  3. Зайди на https://huggingface.co/pyannote/speaker-diarization-3.1 → Agree"
-    echo "  4. Settings → Access Tokens → New token (read)"
-    echo "  5. Скопируй токен"
-    echo "  6. cp .env.example .env"
-    echo "  7. Отредактируй .env (TextEdit), вставь токен"
-    echo "  8. Перезапусти setup.command"
-    echo ""
-    echo "Полная инструкция: docs/setup/hf_token/README.md"
-    read -p "Нажми Enter чтобы закрыть..." _
-    exit 1
-fi
+    echo "ℹ .env не найден — диаризация отключена (это нормально)."
+    echo "  Если когда-нибудь понадобится --diarize: см. docs/setup/hf_token/README.md"
+else
+    # Загрузить .env
+    set -a
+    . ./.env
+    set +a
 
-# Загрузить .env
-set -a
-. ./.env
-set +a
-
-if [ -z "$HF_TOKEN" ] || [ "$HF_TOKEN" = "hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" ]; then
-    echo "ОШИБКА: HF_TOKEN не установлен в .env. См. инструкцию выше."
-    read -p "Нажми Enter чтобы закрыть..." _
-    exit 1
-fi
-
-# Валидация токена
-.venv/bin/python - <<'PY'
+    if [ -z "$HF_TOKEN" ] || [ "$HF_TOKEN" = "hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" ]; then
+        echo "ℹ HF_TOKEN не задан в .env — диаризация отключена."
+        echo "  Если нужна — см. docs/setup/hf_token/README.md"
+    else
+        # Валидация токена и доступа к pyannote (warning-only, не fail)
+        .venv/bin/python - <<'PY' || echo "  (не критично — нужно только для --diarize)"
 import os
 from huggingface_hub import HfApi
+api = HfApi(token=os.environ['HF_TOKEN'])
 try:
-    api = HfApi(token=os.environ['HF_TOKEN'])
     user = api.whoami()
     print(f"✓ HF_TOKEN валиден (user: {user['name']})")
 except Exception as e:
-    print(f"ОШИБКА: HF_TOKEN невалиден: {e}")
-    raise SystemExit(1)
-PY
-
-# Проверка согласия с лицензией pyannote
-.venv/bin/python - <<'PY'
-import os
-from huggingface_hub import HfApi
-try:
-    api = HfApi(token=os.environ['HF_TOKEN'])
-    api.model_info("pyannote/speaker-diarization-3.1")
-    print("✓ есть доступ к pyannote/speaker-diarization-3.1")
-except Exception as e:
-    print(f"ОШИБКА: нет доступа к pyannote/speaker-diarization-3.1.")
-    print(f"Зайди на https://huggingface.co/pyannote/speaker-diarization-3.1 и нажми 'Agree'.")
+    print(f"⚠ HF_TOKEN невалиден: {e}")
     raise SystemExit(1)
 
-try:
-    api.model_info("pyannote/segmentation-3.0")
-    print("✓ есть доступ к pyannote/segmentation-3.0")
-except Exception as e:
-    print(f"ОШИБКА: нет доступа к pyannote/segmentation-3.0.")
-    print(f"Зайди на https://huggingface.co/pyannote/segmentation-3.0 и нажми 'Agree'.")
-    raise SystemExit(1)
+for repo in ("pyannote/speaker-diarization-3.1", "pyannote/segmentation-3.0"):
+    try:
+        api.model_info(repo)
+        print(f"✓ есть доступ к {repo}")
+    except Exception as e:
+        print(f"⚠ нет доступа к {repo}.")
+        print(f"  Зайди на https://huggingface.co/{repo} и нажми 'Agree'.")
+        raise SystemExit(1)
 PY
+    fi
+fi
 
 touch setup_complete.flag
 
@@ -706,7 +686,7 @@ exec > >(tee -a "$LOG") 2>&1
 
 # Дружелюбный обработчик любой неожиданной ошибки в тяжёлых шагах ниже
 # (cut_pauses/transcribe/match — каждый по 30-90 минут; падение на середине
-# реальный кейс: OOM, сетевые сбои при скачивании моделей, missing HF_TOKEN).
+# реальный кейс: OOM, сетевые сбои при скачивании моделей).
 # Без trap'а пользователь видит сырой Python traceback и закрытое окно.
 on_error() {
     echo ""
@@ -777,10 +757,9 @@ fi
 
 # --- 9. transcribe ---
 
-log_step "Транскрибация (whisperx + диаризация)"
+log_step "Транскрибация (whisperx, без диаризации)"
 if [ -d "$PROJECT/cuts" ]; then
     .venv/bin/python _scripts/transcribe.py "$PROJECT/cuts" \
-        --speakers 2 \
         --json \
         --output "$PROJECT/transcripts"
 else
@@ -994,7 +973,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
         ↓
 cut_pauses (удаление пауз и слов-паразитов)
         ↓
-transcribe (whisperx с диаризацией)
+transcribe (whisperx; диаризация опционально через --diarize)
         ↓
 match_timecodes search (поиск кандидатов)
         ↓
@@ -1013,7 +992,7 @@ FCPXML для DaVinci Resolve
 
 См. [QUICKSTART.md](QUICKSTART.md) раздел «Один раз».
 
-Подробности по HF_TOKEN: [docs/setup/hf_token/README.md](docs/setup/hf_token/README.md).
+Опционально (для `transcribe.py --diarize`): [docs/setup/hf_token/README.md](docs/setup/hf_token/README.md). В дефолтном пайплайне токен не нужен.
 
 ## Структура репо
 
@@ -1024,7 +1003,7 @@ FCPXML для DaVinci Resolve
 - `_scripts/` — Python-скрипты (cut_pauses, transcribe, match_timecodes, build_xml).
 - `.claude/skills/match-timecodes/` — скилл для Claude Code (агентная верификация таймкодов).
 - `requirements.txt` — Python-зависимости с пин-версиями.
-- `.env.example` — шаблон для HF_TOKEN.
+- `.env.example` — шаблон для HF_TOKEN (нужен только под опциональный `transcribe.py --diarize`).
 - `projects/<имя>/` — рабочие директории каждого видео (создаются по запросу в Claude Code).
 
 ## Если что-то сломалось
@@ -1057,7 +1036,7 @@ Claude разберёт ошибку и предложит фикс. Если у
 ## Один раз
 
 1. Двойной клик `setup.command`. Жди ~10 минут (скачивание моделей).
-2. Если попросит создать `.env` — следуй инструкции в Терминале или см. [docs/setup/hf_token/README.md](docs/setup/hf_token/README.md).
+2. (Опционально) Если планируешь запускать `transcribe.py --diarize`, заведи `.env` с `HF_TOKEN`. См. [docs/setup/hf_token/README.md](docs/setup/hf_token/README.md). Без него дефолтный пайплайн работает.
 3. Открой Claude Code:
    - В Терминале: `cd /путь/к/factory-employee && claude`
    - При первом запуске: `/login` → авторизация в Anthropic.
@@ -1139,7 +1118,9 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 ---
 
-## Task 9: HF_TOKEN docs
+## Task 9: HF_TOKEN docs (опциональный поток)
+
+Эта инструкция нужна ТОЛЬКО если сотрудник захочет запускать `transcribe.py --diarize`. В дефолтном пайплайне диаризация не используется и токен не нужен.
 
 **Files:**
 - Create: `C:\Users\Alex\Videos\factory-employee\docs\setup\hf_token\README.md`
@@ -1149,9 +1130,11 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 Без скриншотов на этом шаге — добавит сотрудник после первого setup'а или я отдельным коммитом, если будет нужно. Текстовая инструкция самодостаточна.
 
 ```markdown
-# Получение HF_TOKEN
+# Получение HF_TOKEN (опционально)
 
-`pyannote/speaker-diarization-3.1` (диаризация в `transcribe.py`) требует доступ через HuggingFace токен. Это бесплатно, но нужна одноразовая регистрация и согласие с лицензиями.
+Этот токен нужен **только** если запускаешь `transcribe.py --diarize` (диаризация — разметка «Спикер 1/2» в TXT). По умолчанию диаризация выключена и токен не требуется.
+
+`pyannote/speaker-diarization-3.1` (диаризация в `transcribe.py --diarize`) требует доступ через HuggingFace токен. Это бесплатно, но нужна одноразовая регистрация и согласие с лицензиями.
 
 ## Шаги
 
@@ -1191,13 +1174,15 @@ cp .env.example .env
 ### 6. Проверка
 
 Запусти `setup.command` (двойной клик).
-Если всё ок — увидишь:
+Если `.env` лежит рядом и токен валиден — в логе увидишь:
 
 ```
 ✓ HF_TOKEN валиден (user: <твоё имя>)
 ✓ есть доступ к pyannote/speaker-diarization-3.1
 ✓ есть доступ к pyannote/segmentation-3.0
 ```
+
+Если токена нет — setup просто пропустит этот шаг (это нормально для дефолтного пайплайна).
 ```
 
 **Step 2: Commit**
@@ -1429,8 +1414,9 @@ github.com/<your-user>/factory-employee → Settings → Collaborators → Add p
 3. Открой папку в Finder, двойной клик setup.command.
    Жди ~10 минут.
 
-4. Когда setup попросит .env с HF_TOKEN — следуй инструкции.
-   Подробности: docs/setup/hf_token/README.md
+4. (Опционально) Если планируешь запускать transcribe.py --diarize —
+   заведи .env с HF_TOKEN по docs/setup/hf_token/README.md.
+   В дефолтном пайплайне токен не нужен.
 
 5. Дальше — QUICKSTART.md.
 

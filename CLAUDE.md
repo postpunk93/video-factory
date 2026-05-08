@@ -21,15 +21,18 @@ python _scripts/cut_pauses.py <input_file_or_dir> [--output PATH] [--model large
 
 Requires `ffmpeg` and `ffprobe` on PATH. CUDA is auto-detected with CPU fallback. Input должен быть видеоформат (`.mp4/.mov/.mkv/.avi`) — аудио `.m4a/.mp3/.wav` пока не поддерживается.
 
-### transcribe.py — транскрибация с диаризацией
+### transcribe.py — транскрибация (опционально с диаризацией)
 
 ```bash
 pip install whisperx
-python _scripts/transcribe.py <input_file_or_dir> [--speakers 2] [--model large-v3] [--output PATH] [--json]
+python _scripts/transcribe.py <input_file_or_dir> [--diarize [--speakers 2]] [--model large-v3] [--output PATH] [--json]
 ```
 
-Requires `ffprobe` on PATH, `HF_TOKEN` env variable (or `--hf-token`) for pyannote diarization model.
-Outputs: `{filename}.transcript.txt` (human-readable). With `--json`: also `{filename}.transcript.json` (word-level timestamps).
+По умолчанию диаризация ВЫКЛ — match_timecodes/build_xml её не используют, и для большинства проектов она лишняя. Включать `--diarize` только когда нужна разметка «Спикер 1/2» в TXT (например, для аналитика, разбирающего интервью с двумя голосами в одном файле).
+
+Requires `ffprobe` on PATH. С флагом `--diarize` дополнительно нужен `HF_TOKEN` env variable (или `--hf-token`) для модели pyannote.
+
+Outputs: `{filename}.transcript.txt` (human-readable). With `--json`: also `{filename}.transcript.json` (word-level timestamps). Без `--diarize` в TXT нет префиксов «Спикер X:», в JSON нет полей `speaker`/`speakers_count`.
 
 ### match_timecodes.py — сопоставление реплик сценария с таймкодами
 
