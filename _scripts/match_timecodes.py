@@ -880,6 +880,46 @@ def find_internal_break(file_path, word_at_start, word_at_end,
     return new_start, new_end
 
 
+def detect_silences_in_range(video_path: Path, t_start: float, t_end: float,
+                              d: float = 0.05, noise: str = "-30dB") -> list[dict]:
+    """Запускает silencedetect на узком окне [t_start, t_end] с низким порогом
+    минимальной длительности паузы. Используется для поиска внутренних пауз
+    в подозрительно длинных Whisper-словах (схлопнутые дубли).
+
+    Возвращает [{start, end}, ...] в АБСОЛЮТНЫХ секундах файла.
+    """
+    duration = t_end - t_start
+    if duration <= 0:
+        return []
+    cmd = [
+        "ffmpeg", "-ss", f"{t_start:.3f}", "-t", f"{duration:.3f}",
+        "-i", str(video_path),
+        "-af", f"silencedetect=noise={noise}:d={d}",
+        "-f", "null", "-"
+    ]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace"
+        )
+    except FileNotFoundError:
+        print("Ошибка: ffmpeg не найден", file=sys.stderr)
+        sys.exit(1)
+
+    output = result.stderr
+    starts = re.findall(r"silence_start:\s*(-?[\d.]+)", output)
+    ends = re.findall(r"silence_end:\s*(-?[\d.]+)", output)
+
+    silences = []
+    # ffmpeg -ss даёт времена ОТНОСИТЕЛЬНО окна. Сдвигаем на t_start.
+    for i in range(min(len(starts), len(ends))):
+        s = float(starts[i]) + t_start
+        e = float(ends[i]) + t_start
+        if s < t_start - 0.01 or e > t_end + 0.01:
+            continue
+        silences.append({"start": max(s, t_start), "end": min(e, t_end)})
+    return silences
+
+
 def detect_silences(video_path: Path) -> list[dict]:
     """Запускает ffmpeg silencedetect, возвращает [{start, end}, ...]."""
     cmd = [
