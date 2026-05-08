@@ -595,6 +595,57 @@ def detect_overlaps(rows: list[dict], min_overlap_ms: int = 50) -> list[dict]:
     return out
 
 
+def detect_within_word(rows: list[dict], transcripts: dict[str, list[dict]],
+                       word_tol_ms: int = 50) -> list[dict]:
+    """Детектирует попадание границы парта внутрь слова.
+
+    Для каждого парта проверяет start и end: если значение лежит между
+    word.start и word.end какого-то слова, и не близко к word.start или
+    word.end в пределах word_tol_ms — это конфликт.
+
+    Args:
+        rows: строки verified.json (как в detect_overlaps).
+        transcripts: dict[file_name, list[word_dict]] — слова из *.transcript.json.
+        word_tol_ms: допуск «граница попала на word boundary».
+
+    Returns:
+        Список флагов: {row_idx, part_idx, edge, word, word_start, word_end, part_value}.
+    """
+    tol_s = word_tol_ms / 1000.0
+    out: list[dict] = []
+
+    for row in rows:
+        parts = row.get("chosen_parts") or []
+        for pidx, p in enumerate(parts):
+            words = transcripts.get(p.get("file"))
+            if not words:
+                continue
+            for edge in ("start", "end"):
+                t = p.get(edge)
+                if t is None:
+                    continue
+                for w in words:
+                    ws, we = w.get("start"), w.get("end")
+                    if ws is None or we is None:
+                        continue
+                    if not (ws < t < we):
+                        continue
+                    # внутри слова — проверяем близость к границам
+                    if (t - ws) <= tol_s or (we - t) <= tol_s:
+                        break  # достаточно близко, не флагаем
+                    out.append({
+                        "row_idx": row["row_idx"],
+                        "part_idx": pidx,
+                        "edge": edge,
+                        "word": w.get("word"),
+                        "word_start": ws,
+                        "word_end": we,
+                        "part_value": t,
+                    })
+                    break  # одно совпадение слова — выходим
+    return out
+
+
 # ─── Поиск кандидатов ──────────────────────────────────────────────────────
 
 def find_candidates(phrase: str, transcripts: dict) -> list[dict]:
