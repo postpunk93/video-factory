@@ -555,6 +555,46 @@ def find_quote_parts(phrase: str, transcripts: dict) -> dict:
     }
 
 
+# ─── Validation (этап B2: video-use ideas) ─────────────────────────────────
+
+def detect_overlaps(rows: list[dict], min_overlap_ms: int = 50) -> list[dict]:
+    """Детектирует word-overlap'ы внутри одной строки verified.json.
+
+    Для каждой пары партов (i, j) с одинаковым file: если
+    [start_i, end_i] пересекается с [start_j, end_j] более чем на
+    min_overlap_ms — это конфликт (агент-верификатор выбрал перекрывающиеся
+    диапазоны, на таймлайне даст повтор аудио).
+
+    Args:
+        rows: список строк verified.json. Каждая row: {row_idx, chosen_parts}.
+        min_overlap_ms: порог минимального оверлапа (артефакты Whisper).
+
+    Returns:
+        Список конфликтов: {row_idx, file, part_a, part_b, intersection_s}.
+    """
+    min_overlap_s = min_overlap_ms / 1000.0
+    out: list[dict] = []
+    for row in rows:
+        parts = row.get("chosen_parts") or []
+        for i in range(len(parts)):
+            for j in range(i + 1, len(parts)):
+                a, b = parts[i], parts[j]
+                if a.get("file") != b.get("file"):
+                    continue
+                lo = max(a["start"], b["start"])
+                hi = min(a["end"], b["end"])
+                inter = hi - lo
+                if inter > min_overlap_s:
+                    out.append({
+                        "row_idx": row["row_idx"],
+                        "file": a.get("file"),
+                        "part_a": i,
+                        "part_b": j,
+                        "intersection_s": round(inter, 3),
+                    })
+    return out
+
+
 # ─── Поиск кандидатов ──────────────────────────────────────────────────────
 
 def find_candidates(phrase: str, transcripts: dict) -> list[dict]:
