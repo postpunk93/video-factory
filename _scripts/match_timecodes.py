@@ -16,11 +16,9 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-if sys.platform == "win32":
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+from _common import VIDEO_EXTS, fix_windows_stdio, format_tc as fmt_tc
 
-VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".avi"}
+fix_windows_stdio()
 
 
 # ─── Утилиты ───────────────────────────────────────────────────────────────
@@ -32,15 +30,6 @@ def normalize(text: str) -> str:
     text = re.sub(r"[^\w\s]", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
-
-
-def fmt_tc(seconds: float) -> str:
-    """Секунды → 'MM:SS.ss'."""
-    if seconds <= 0:
-        return "00:00.00"
-    m = int(seconds) // 60
-    s = seconds - m * 60
-    return f"{m:02d}:{s:05.2f}"
 
 
 # ─── Pack-формат (этап B1: video-use ideas) ────────────────────────────────
@@ -664,15 +653,16 @@ def _load_transcripts_for_validation(project_dir: Path) -> dict[str, list[dict]]
         for seg in data.get("segments", []):
             words.extend(seg.get("words", []))
         # Маппим на оригинальные имена видеофайлов (с расширением).
-        # verified.json содержит file как "X.mov" — ищем все возможные ext.
+        # verified.json содержит file как "X.mov" — ищем по VIDEO_EXTS.
         stem = jp.name.replace(".transcript.json", "")
-        for ext in (".mov", ".mp4", ".mkv", ".avi", ".MOV", ".MP4"):
-            candidate = project_dir / "raw" / "voiceover" / f"{stem}{ext}"
-            if not candidate.exists():
-                candidate = project_dir / "raw" / "interviews" / f"{stem}{ext}"
-            if candidate.exists():
-                out[f"{stem}{ext}"] = words
-                break
+        for raw_subdir in ("voiceover", "interviews"):
+            for src in (project_dir / "raw" / raw_subdir).glob(f"{stem}.*"):
+                if src.suffix.lower() in VIDEO_EXTS:
+                    out[src.name] = words
+                    break
+            else:
+                continue
+            break
         else:
             # Фолбэк — кладём по голому stem (validate всё равно отработает,
             # если verified.json по какой-то причине без расширения).

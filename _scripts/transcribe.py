@@ -11,10 +11,9 @@ import sys
 from datetime import date
 from pathlib import Path
 
-# Fix Windows terminal encoding for Cyrillic output
-if sys.platform == "win32":
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+from _common import MEDIA_EXTS, fix_windows_stdio, format_tc, probe_duration
+
+fix_windows_stdio()
 
 # Загрузить .env из корня проекта
 _env_file = Path(__file__).resolve().parent.parent / ".env"
@@ -24,10 +23,6 @@ if _env_file.exists():
         if line and not line.startswith("#") and "=" in line:
             key, _, value = line.partition("=")
             os.environ.setdefault(key.strip(), value.strip())
-
-VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi"}
-AUDIO_EXTENSIONS = {".wav", ".mp3", ".ogg", ".flac", ".m4a"}
-ALL_EXTENSIONS = VIDEO_EXTENSIONS | AUDIO_EXTENSIONS
 
 
 # ── CLI и сбор файлов ─────────────────────────────────────────────
@@ -76,7 +71,7 @@ def collect_files(input_path):
     """Собрать аудио/видеофайлы из пути."""
     p = Path(input_path)
     if p.is_file():
-        if p.suffix.lower() in ALL_EXTENSIONS:
+        if p.suffix.lower() in MEDIA_EXTS:
             return [p]
         else:
             print(f"Предупреждение: {p} — неподдерживаемый формат.")
@@ -84,7 +79,7 @@ def collect_files(input_path):
     elif p.is_dir():
         files = sorted(
             f for f in p.iterdir()
-            if f.is_file() and f.suffix.lower() in ALL_EXTENSIONS
+            if f.is_file() and f.suffix.lower() in MEDIA_EXTS
         )
         if not files:
             print(f"Предупреждение: в папке {p} нет аудио/видеофайлов.")
@@ -246,13 +241,8 @@ def build_speaker_map(speakers):
 
 
 def format_time(seconds):
-    """Секунды → HH:MM:SS или MM:SS."""
-    s = int(seconds)
-    h, remainder = divmod(s, 3600)
-    m, sec = divmod(remainder, 60)
-    if h > 0:
-        return f"{h:02d}:{m:02d}:{sec:02d}"
-    return f"{m:02d}:{sec:02d}"
+    """Секунды → H:MM:SS или MM:SS (через _common.format_tc)."""
+    return format_tc(seconds, fractional=False)
 
 
 def save_txt(blocks, speaker_map, source_name, duration, output_path):
@@ -322,13 +312,8 @@ def save_json(blocks, speaker_map, source_name, duration, output_path):
 
 
 def get_duration(filepath):
-    """Получить длительность файла через ffprobe."""
-    result = subprocess.run(
-        ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", str(filepath)],
-        capture_output=True, text=True
-    )
-    return float(result.stdout.strip())
+    """Получить длительность файла через ffprobe (alias к _common.probe_duration)."""
+    return probe_duration(Path(filepath))
 
 
 def get_output_dir(filepath, output_arg):

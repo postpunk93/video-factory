@@ -19,13 +19,14 @@ import re
 from urllib.parse import quote
 from xml.dom import minidom
 
-if sys.platform == "win32":
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+from _common import (
+    MEDIA_EXTS as MEDIA_EXTENSIONS,
+    fix_windows_stdio,
+    format_tc,
+    parse_tc as _parse_tc_common,
+)
 
-VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi"}
-AUDIO_EXTENSIONS = {".m4a", ".mp3", ".wav", ".aac", ".flac"}
-MEDIA_EXTENSIONS = VIDEO_EXTENSIONS | AUDIO_EXTENSIONS
+fix_windows_stdio()
 
 
 # ---------------------------------------------------------------------------
@@ -164,15 +165,7 @@ def scan_project(project_dir: Path) -> tuple[dict, dict, dict]:
 # Таймкоды
 # ---------------------------------------------------------------------------
 
-def parse_tc(tc_str: str) -> float:
-    """Парсит таймкод HH:MM:SS.ss или MM:SS.ss в секунды."""
-    parts = tc_str.strip().split(":")
-    parts = [p.strip() for p in parts]
-    if len(parts) == 3:
-        return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
-    elif len(parts) == 2:
-        return int(parts[0]) * 60 + float(parts[1])
-    return 0
+parse_tc = _parse_tc_common
 
 
 def _resolve_file_key(name: str, filename_to_key: dict) -> str | None:
@@ -813,9 +806,7 @@ def main():
     print(f"Всего клипов: {len(clips)}")
 
     total_sec = cursor / seq_fps
-    total_min = int(total_sec) // 60
-    total_s = int(total_sec) % 60
-    print(f"Длительность таймлайна: {total_min}:{total_s:02d}")
+    print(f"Длительность таймлайна: {format_tc(total_sec, fractional=False)}")
 
     if skipped:
         print(f"\nПропущено ({len(skipped)}):")
