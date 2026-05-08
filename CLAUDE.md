@@ -10,17 +10,6 @@ Design docs are in `docs/plans/`. Original cut_pauses spec archived in `docs/arc
 
 ## Scripts
 
-### cut_pauses.py — удаление пауз и слов-паразитов
-
-```bash
-pip install faster-whisper tqdm
-python _scripts/cut_pauses.py <input_file_or_dir> [--output PATH] [--model large-v3] [--pause 0.5] [--profile slava|hero] [--save-transcript]
-```
-
-`--profile slava` (по умолчанию) — агрессивная чистка для войсовера: FILLER_WORDS + заикания + междометия + повторы. `--profile hero` — мягкая чистка интервью героя: только заикания, междометия и подряд идущие повторы; FILLER_WORDS не трогаются. Whisper ru-транскрипт редко содержит сами междометия/заикания — на практике на hero-профиле режутся в основном повторы и паузы.
-
-Requires `ffmpeg` and `ffprobe` on PATH. CUDA is auto-detected with CPU fallback. Input должен быть видеоформат (`.mp4/.mov/.mkv/.avi`) — аудио `.m4a/.mp3/.wav` пока не поддерживается.
-
 ### transcribe.py — транскрибация (опционально с диаризацией)
 
 ```bash
@@ -61,7 +50,7 @@ python _scripts/match_timecodes.py validate <project_dir>   # B2: проверк
 python _scripts/build_xml.py <project_dir> [--davinci]
 ```
 
-Сканирует `voiceover/` и `interviews/` (видео + аудио форматы), получает метаданные через `ffprobe`, читает `script/script.csv` и генерирует FCP 7 XML в `assembly/`. Для каждого подкаталога приоритет у `cuts/<subdir>/` (если непуст), иначе `raw/<subdir>/`. Так очищенные cut_pauses файлы автоматически подхватываются. Выходные файлы: `{name}_rough_cut.xml` (относительные пути) и `{name}_rough_cut_local.xml` (абсолютные). С флагом `--davinci` дополнительно генерирует `{name}_rough_cut.fcpxml` (относительные пути) и `{name}_rough_cut_local.fcpxml` (абсолютные пути) — FCPXML 1.9 для DaVinci Resolve. Требует `ffprobe` на PATH.
+Сканирует `raw/voiceover/` и `raw/interviews/` (видео + аудио форматы), получает метаданные через `ffprobe`, читает `script/script.csv` и генерирует FCP 7 XML в `assembly/`. Выходные файлы: `{name}_rough_cut.xml` (относительные пути) и `{name}_rough_cut_local.xml` (абсолютные). С флагом `--davinci` дополнительно генерирует `{name}_rough_cut.fcpxml` (относительные пути) и `{name}_rough_cut_local.fcpxml` (абсолютные пути) — FCPXML 1.9 для DaVinci Resolve. Требует `ffprobe` на PATH.
 
 **Формат таймкодов в CSV:** одна реплика может быть составной. Формат части — `file.ext: MM:SS.ss — MM:SS.ss` (двоеточие + em-dash, новый) или `file.ext, MM:SS.ss -> MM:SS.ss` (старый). Составные цитаты склеиваются разделителем ` || `, например:
 
@@ -98,7 +87,6 @@ python _scripts/build_xml.py <project_dir> [--davinci]
   raw/voiceover/     ← начитка Славы
   raw/article.md     ← статья
   transcripts/       ← расшифровки (transcribe.py)
-  cuts/              ← нарезки: очищенные видео, реплики героя
   audio/             ← извлечённый звук
   script/            ← сценарий
   subtitles/         ← SRT-файлы

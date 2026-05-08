@@ -4,3 +4,4 @@ __pycache__/
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
 .env
+_baseline_2026-05-08/
