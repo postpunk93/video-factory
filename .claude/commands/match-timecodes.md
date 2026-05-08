@@ -213,6 +213,38 @@ problem_set = set(o["row_idx"] for o in overlaps) \
 script.csv не будет сгенерирован snap'ом, пока есть оверлапы.
 ```
 
+## 6.6. Подготовь fix-payload для проблемных строк
+
+**Row picker.** Из `verified.json` выбери только записи с `row_idx in problem_set`.
+
+**Context builder.** Для каждой проблемной строки собери `payload`:
+
+```python
+{
+  "row_idx": <int>,
+  "text": <оригинальный текст из verified.json>,
+  "current_chosen_parts": <текущий chosen_parts из verified.json>,
+  "issues": [
+    # из overlaps этой строки:
+    {"type": "overlap", "parts": [a, b], "file": "...",
+     "intersection_s": 0.10},
+    # из within_word этой строки:
+    {"type": "within_word", "part_idx": 0, "edge": "end",
+     "word": "курьерах", "word_start": 187.55, "word_end": 190.14,
+     "part_value": 189.05}
+  ],
+  "original_candidates": <запись этой row_idx из candidates.json>,
+  "words_context": <фрагмент words_compact.txt ±10s вокруг текущих
+                    границ chosen_parts, по правилу из шага 4>
+}
+```
+
+`original_candidates` — это вся запись из `candidates.json` для этой строки (включая `parts[]`, `unmatched`, `mode`, `status`). Агенту это нужно, чтобы видеть альтернативы.
+
+`words_context` строится так же, как в шаге 4: из соответствующего `words_compact.txt` берутся все строки, у которых `START` попадает в `[part.start - 10, part.end + 10]` для каждого парта в `current_chosen_parts`.
+
+Сохрани полный список `fix_payload[]` в памяти — он передаётся агенту в шаге 6.7.
+
 ## 7. Выведи итоговую сводку
 
 ```
