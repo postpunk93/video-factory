@@ -614,6 +614,7 @@ def build_fcpxml(clips, files, seq_settings, seq_name, relative=True):
     # Сначала собираем gap-и и клипы Славы в spine
     slava_clips = [c for c in clips if c["track"] == "slava"]
     hero_clips = [c for c in clips if c["track"] == "hero"]
+    placed_ids: set[int] = set()
 
     seq_fps = seq_settings["fps"]
     spine_cursor = 0  # в кадрах
@@ -643,7 +644,7 @@ def build_fcpxml(clips, files, seq_settings, seq_name, relative=True):
                                   offset=h_offset,
                                   start=h_start,
                                   duration=h_dur)
-                    hc["_placed"] = True
+                    placed_ids.add(id(hc))
 
         offset = _sec_to_rational(clip["seq_start"] / seq_fps, seq_tb, seq_ntsc)
         start = _sec_to_rational(clip["src_start"], seq_tb, seq_ntsc)
@@ -659,7 +660,7 @@ def build_fcpxml(clips, files, seq_settings, seq_name, relative=True):
 
         # Герой-клипы, которые попадают во время этого клипа Славы
         for hc in hero_clips:
-            if hc.get("_placed"):
+            if id(hc) in placed_ids:
                 continue
             if hc["seq_start"] >= clip["seq_start"] and hc["seq_start"] < clip["seq_end"]:
                 h_offset = _sec_to_rational(
@@ -674,12 +675,12 @@ def build_fcpxml(clips, files, seq_settings, seq_name, relative=True):
                               offset=h_offset,
                               start=h_start,
                               duration=h_dur)
-                hc["_placed"] = True
+                placed_ids.add(id(hc))
 
         spine_cursor = clip["seq_end"]
 
     # Оставшиеся герой-клипы после последнего клипа Славы
-    unplaced = [hc for hc in hero_clips if not hc.get("_placed")]
+    unplaced = [hc for hc in hero_clips if id(hc) not in placed_ids]
     if unplaced:
         # Добавляем gap до конца и вешаем на него
         last_hero_end = max(hc["seq_end"] for hc in unplaced)

@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import sys
+import traceback
 from datetime import date
 from pathlib import Path
 
@@ -395,19 +396,23 @@ def main():
 
     device, compute_type = detect_device()
 
+    failed = 0
     for filepath in files:
         try:
             process_file(filepath, args, device, compute_type, token)
         except KeyboardInterrupt:
-            print("\nПрервано пользователем.")
-            sys.exit(1)
+            print("\nПрервано пользователем.", file=sys.stderr)
+            return 130
         except Exception as e:
-            print(f"Ошибка при обработке {filepath.name}: {e}")
+            print(f"Ошибка при обработке {filepath.name}: {e}", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
+            failed += 1
             continue
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
-    main()
+    rc = main() or 0
     sys.stdout.flush()
     sys.stderr.flush()
-    os._exit(0)  # avoid CUDA teardown crash
+    os._exit(rc)  # CUDA teardown crash workaround; preserve exit code

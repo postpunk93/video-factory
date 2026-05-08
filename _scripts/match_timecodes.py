@@ -997,20 +997,20 @@ def cmd_search(project_dir: Path) -> None:
 
 # ─── Команда: snap ─────────────────────────────────────────────────────────
 
-def _get_chosen_parts(row: dict) -> list[dict]:
-    """Возвращает список chosen_parts из строки verified.json.
-
-    Поддерживает оба формата:
-    - новый: row["chosen_parts"] = [{file, start, end, text?}, ...]
-    - старый: row["chosen"] = {file, start, end} → нормализуется в список из одного элемента.
-    """
-    chosen_parts = row.get("chosen_parts")
-    if chosen_parts is not None:
-        return [p for p in chosen_parts if p and p.get("file")]
-    chosen = row.get("chosen")
-    if chosen and chosen.get("file"):
-        return [chosen]
-    return []
+def _load_verified(project_dir: Path) -> dict:
+    """Грузит verified.json и приводит legacy `chosen` → `chosen_parts` на месте."""
+    verified_path = project_dir / "script" / "verified.json"
+    with open(verified_path, encoding="utf-8") as f:
+        data = json.load(f)
+    for row in data.get("rows", []):
+        if "chosen_parts" not in row and row.get("chosen", {}).get("file"):
+            row["chosen_parts"] = [row["chosen"]]
+        elif "chosen_parts" in row:
+            row["chosen_parts"] = [p for p in row["chosen_parts"] if p and p.get("file")]
+        else:
+            row["chosen_parts"] = []
+        row.pop("chosen", None)
+    return data
 
 
 def cmd_snap(project_dir: Path) -> None:
@@ -1022,15 +1022,14 @@ def cmd_snap(project_dir: Path) -> None:
         print(f"Ошибка: не найден {verified_path}", file=sys.stderr)
         sys.exit(1)
 
-    with open(verified_path, "r", encoding="utf-8") as f:
-        verified = json.load(f)
+    verified = _load_verified(project_dir)
 
     # Preflight (B2): не snap-нем, если в verified.json уже есть word-overlap'ы.
     # Иначе snap запишет в CSV сломанные строки, которые потом дадут повтор
     # аудио на таймлайне.
     rows_for_check = [{
         "row_idx": r["row_idx"],
-        "chosen_parts": _get_chosen_parts(r),
+        "chosen_parts": r["chosen_parts"],
     } for r in verified["rows"]]
     overlaps = detect_overlaps(rows_for_check, min_overlap_ms=50)
     if overlaps:
@@ -1044,8 +1043,7 @@ def cmd_snap(project_dir: Path) -> None:
     # Собираем уникальные файлы из всех частей всех строк.
     files_needed = set()
     for row in verified["rows"]:
-        parts = _get_chosen_parts(row)
-        for p in parts:
+        for p in row["chosen_parts"]:
             if p.get("file"):
                 files_needed.add(p["file"])
 
@@ -1080,7 +1078,7 @@ def cmd_snap(project_dir: Path) -> None:
 
     # Привязываем таймкоды
     for row in verified["rows"]:
-        parts = _get_chosen_parts(row)
+        parts = row["chosen_parts"]
         if not parts:
             continue
 
@@ -1229,17 +1227,11 @@ def cmd_validate(project_dir: Path, word_tol_ms: int = 50,
         print(f"Ошибка: не найден {verified_path}", file=sys.stderr)
         return 1
 
-    with open(verified_path, "r", encoding="utf-8") as f:
-        verified = json.load(f)
+    verified = _load_verified(project_dir)
 
-    # Нормализуем строки: подмешиваем chosen_parts в формате detect_overlaps.
-    rows = []
-    for row in verified["rows"]:
-        chosen = _get_chosen_parts(row)
-        rows.append({
-            "row_idx": row["row_idx"],
-            "chosen_parts": chosen,
-        })
+    # Нормализуем строки в формат detect_overlaps.
+    rows = [{"row_idx": row["row_idx"], "chosen_parts": row["chosen_parts"]}
+            for row in verified["rows"]]
 
     overlaps = detect_overlaps(rows, min_overlap_ms=min_overlap_ms)
     transcripts = _load_transcripts_for_validation(project_dir)
